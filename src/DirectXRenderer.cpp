@@ -1,7 +1,23 @@
-#include "iostream"
+#include "Base/DxRenderBase.h"
+#include "SimpleScreenApp.h"
 
-int main()
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
+                   PSTR cmdLine, int showCmd)
 {
-	std::cout << "Hey there! This is DirectX Renderer." << std::endl;
-	return 0;
+#if  defined(_DEBUG) || defined(DEBUG)
+    _CrtSetDbgFlag( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
+#endif
+
+    try
+    {
+        SimpleScreenApp ScreenApp(hInstance);
+        if(!ScreenApp.Initialize())
+            return 0;
+        return ScreenApp.Run();
+    }
+    catch (DxException& e)
+    {
+        MessageBox(nullptr, e.ToString().c_str(), L"HR Failed", MB_OK);
+        return 0;
+    }
 }
