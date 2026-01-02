@@ -149,20 +149,29 @@
   <ItemGroup>
     <ClCompile Include="src\Base\GameTime.cpp" />
     <ClCompile Include="src\Base\DxRenderBase.cpp" />
+    <ClCompile Include="src\ShapesApp.cpp" />
+    <ClCompile Include="src\Utility\Camera.cpp" />
     <ClCompile Include="src\Utility\d3dUtil.cpp" />
     <ClCompile Include="src\Utility\DDSTextureLoader.cpp" />
     <ClCompile Include="src\Utility\MathHelper.cpp" />
-    <ClCompile Include="src\DirectXRenderer.cpp" />
+    <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\SimpleScreenApp.cpp" />
     <ClCompile Include="src\SimpleScreenApp.h" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Base\GameTime.h" />
     <ClInclude Include="src\Base\DxRenderBase.h" />
+    <ClInclude Include="src\ShapesApp.h" />
+    <ClInclude Include="src\Utility\Camera.h" />
     <ClInclude Include="src\Utility\d3dUtil.h" />
     <ClInclude Include="src\Utility\d3dx12.h" />
     <ClInclude Include="src\Utility\DDSTextureLoader.h" />
+    <ClInclude Include="src\Utility\Objects\FrameResource.h" />
     <ClInclude Include="src\Utility\MathHelper.h" />
+    <ClInclude Include="src\Utility\Objects\UploadBuffer.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\ShapesApp.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

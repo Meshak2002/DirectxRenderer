@@ -9,8 +9,9 @@ public:
 	SimpleScreenApp(const SimpleScreenApp& ScreenApp)=delete;
 	SimpleScreenApp& operator=(SimpleScreenApp & ScreenApp)=delete;
 
-	~SimpleScreenApp();
+	virtual ~SimpleScreenApp() override;
 
 	virtual void Draw(const GameTime& Gt) override;
+
 
 };

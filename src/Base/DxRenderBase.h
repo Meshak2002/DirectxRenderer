@@ -28,6 +28,7 @@ public:
 	virtual LRESULT MsgProc(HWND Hwnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 
 protected:
+	HWND MainWindowHandle = nullptr;
 	UINT ScreenWidth = 800;
 	UINT ScreenHeight = 600;
 	UINT CurrentBackBuffer = 0;
@@ -42,7 +43,8 @@ protected:
 	Microsoft::WRL::ComPtr<ID3D12Fence> Fence;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> RtvHeap;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DsvHeap;
-	Microsoft::WRL::ComPtr<ID3D12PipelineState> PSO;
+	
+	UINT64 GlobalFenceValue = 0;
 	RECT ScissorRect;
 	D3D12_VIEWPORT Viewport;
 	HINSTANCE WindowInstance;
@@ -77,9 +79,8 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12Resource> DepthBuffer;
 
 	UINT MsaaQuality = 0;
-	UINT64 CurrentFence = 0;
 
-	HWND MainWindowHandle = nullptr;
+
 	GameTime GameTimer;
 
 	bool AppPaused = false;

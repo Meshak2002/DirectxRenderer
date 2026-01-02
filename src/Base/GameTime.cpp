@@ -4,8 +4,10 @@
 GameTime::GameTime()
 	: DeltaTime(0), PrevTime(0), CurrTime(0) , Stopped(false)
 {
-	QueryPerformanceFrequency((LARGE_INTEGER*)&CountsPerSecond);
-	SecondsPerCount = 1.0 / (double)CountsPerSecond;
+	__int64 countsPerSec;
+	QueryPerformanceFrequency((LARGE_INTEGER*)&countsPerSec);
+	CountsPerSecond = static_cast<double>(countsPerSec);
+	SecondsPerCount = 1.0 / CountsPerSecond;
 }
 
 void GameTime::Reset()

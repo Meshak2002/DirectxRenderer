@@ -8,6 +8,8 @@ SimpleScreenApp::SimpleScreenApp(HINSTANCE ScreenInstance) : DxRenderBase(Screen
 
 SimpleScreenApp::~SimpleScreenApp()
 {
+	if (DxDevice3D)
+		FlushCommandQueue();
 }
 
 void SimpleScreenApp::Draw(const GameTime& Gt)

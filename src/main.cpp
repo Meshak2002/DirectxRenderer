@@ -1,8 +1,8 @@
 #include "Base/DxRenderBase.h"
+#include "ShapesApp.h"
 #include "SimpleScreenApp.h"
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
-                   PSTR cmdLine, int showCmd)
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, PSTR cmdLine, int showCmd)
 {
 #if  defined(_DEBUG) || defined(DEBUG)
     _CrtSetDbgFlag( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
@@ -10,10 +10,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 
     try
     {
-        SimpleScreenApp ScreenApp(hInstance);
-        if(!ScreenApp.Initialize())
+        ShapesApp App(hInstance);
+        if(!App.Initialize())
             return 0;
-        return ScreenApp.Run();
+        return App.Run();
     }
     catch (DxException& e)
     {

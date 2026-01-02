@@ -13,7 +13,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\DirectXRenderer.cpp">
+    <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\SimpleScreenApp.cpp">
@@ -34,11 +34,15 @@
     <ClCompile Include="src\Utility\MathHelper.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
+    <ClCompile Include="src\SimpleScreenApp.h" />
+    <ClCompile Include="src\ShapesApp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Utility\Camera.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="src\SimpleScreenApp.h">
-      <Filter>Source Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\Base\DxRenderBase.h">
       <Filter>Source Files\Base</Filter>
     </ClInclude>
@@ -57,5 +61,12 @@
     <ClInclude Include="src\Utility\MathHelper.h">
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="src\ShapesApp.h" />
+    <ClInclude Include="src\Utility\Objects\UploadBuffer.h" />
+    <ClInclude Include="src\Utility\Objects\FrameResource.h" />
+    <ClInclude Include="src\Utility\Camera.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\ShapesApp.hlsl" />
   </ItemGroup>
 </Project>
