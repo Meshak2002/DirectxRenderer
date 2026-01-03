@@ -44,7 +44,7 @@ protected:
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> RtvHeap;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DsvHeap;
 	
-	UINT64 GlobalFenceValue = 0;
+	UINT64 CurrentFenceValue = 0;
 	RECT ScissorRect;
 	D3D12_VIEWPORT Viewport;
 	HINSTANCE WindowInstance;

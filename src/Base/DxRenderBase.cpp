@@ -373,13 +373,13 @@ void DxRenderBase::CreateRtvDsvHeap()
 
 void DxRenderBase::FlushCommandQueue()
 {
-	GlobalFenceValue++;
-	ThrowIfFailed( CommandQueue->Signal(Fence.Get(), GlobalFenceValue) );
-	if (Fence->GetCompletedValue() < GlobalFenceValue)
+	CurrentFenceValue++;
+	ThrowIfFailed( CommandQueue->Signal(Fence.Get(), CurrentFenceValue) );
+	if (Fence->GetCompletedValue() < CurrentFenceValue)
 	{
 		HANDLE EventHandle = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
 
-		ThrowIfFailed(Fence->SetEventOnCompletion(GlobalFenceValue, EventHandle));
+		ThrowIfFailed(Fence->SetEventOnCompletion(CurrentFenceValue, EventHandle));
 		WaitForSingleObject(EventHandle, INFINITE);
 		CloseHandle(EventHandle);
 	}

@@ -1,5 +1,9 @@
 #include "ShapesApp.h"
 #include "DirectXMath.h"
+#include "iostream"
+#include <filesystem>
+
+const int gNumFrameResources = 3;
 
 ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance)
 {
@@ -74,25 +78,20 @@ bool ShapesApp::Initialize()
 	if (!DxRenderBase::Initialize())
 		return false;
 
-	ViewCamera->SetPosition(0, 0, -15);
-	ViewCamera->LookAt(
-		ViewCamera->GetPosition3f(),
-		DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f),    
-		DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f));   
-	ViewCamera->UpdateViewMatrix();
-
+	InitCamera();
 
 	ThrowIfFailed(CommandList->Reset(CommandAlloc.Get(), nullptr));
+
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
+	BuildDescriptorHeap();
 
-	BuildGeometry();
-	BuildRenderItem();
+	BuildGeometryResource();
+	BuildTextures();
+	BuildMaterials();
+	BuildRenderItems();
 
 	BuildFrameResources();
-	BuildDescriptorHeap();
-	BuildDescriptors();
-
 	BuildPSO();
 
 	CommandList->Close();
@@ -101,6 +100,76 @@ bool ShapesApp::Initialize()
 
 	FlushCommandQueue();
 	return true;
+}
+
+void ShapesApp::InitCamera()
+{
+	ViewCamera->SetPosition(0, 0, -15);
+	ViewCamera->LookAt(
+		ViewCamera->GetPosition3f(),
+		DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f),
+		DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f));
+	ViewCamera->UpdateViewMatrix();
+}
+
+void ShapesApp::BuildTextures()
+{
+	UINT TexturesCount = 0;
+	auto DescHeapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE( DescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+
+	std::string TextureDirectory = "Assets\\Textures\\Diffuse";
+	assert(std::filesystem::exists(TextureDirectory));
+
+	//Create Diffuse Textures
+	for (auto Entry : std::filesystem::directory_iterator(TextureDirectory))
+	{
+		if (!Entry.is_regular_file() || Entry.path().extension() != ".dds")
+			continue;
+		auto NewTexture = std::make_unique<Texture>();
+		NewTexture->Name =  "Tex" + Entry.path().stem().string();
+		NewTexture->Filename = Entry.path().wstring();
+		NewTexture->HeapIndex = TexturesCount;
+		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(DxDevice3D.Get(), CommandList.Get(),
+			NewTexture->Filename.c_str(), NewTexture->Resource, NewTexture->UploadHeap));
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Format = NewTexture->Resource.Get()->GetDesc().Format;
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.MipLevels = NewTexture->Resource.Get()->GetDesc().MipLevels;
+		srvDesc.Texture2D.ResourceMinLODClamp = 0;
+		DxDevice3D->CreateShaderResourceView(NewTexture->Resource.Get(), &srvDesc, DescHeapCpuHandle);
+		DescHeapCpuHandle.Offset(1, CbvSrvUavDescriptorSize);
+		Textures[NewTexture->Name] = move(NewTexture);
+		TexturesCount++;
+	}
+}
+
+void ShapesApp::BuildMaterials()
+{
+	//Build For All Textures : 
+	for(const auto& [Key,Value] : Textures)
+	{
+		auto NewMaterial = std::make_unique<Material>();
+		NewMaterial->DiffuseSrvHeapIndex = Textures[Key]->HeapIndex;
+		//	..... @TODO
+		//	...
+		//	..
+		Materials[std::string("Mat")+ Key] = move(NewMaterial);
+	}
+}
+
+Material* ShapesApp::GetMaterialForTexture(std::string TexName)
+{
+	auto MaterialRef =  Materials[std::string("Mat") + TexName].get();
+	if(!MaterialRef)
+	{
+		std::string ErrorMsg = "Material for the given Texture name is not present: " + TexName + "\n";
+		::OutputDebugStringA(ErrorMsg.c_str());
+		assert(MaterialRef && "Material for the given Texture name is not present");
+	}
+	return MaterialRef;
 }
 
 void ShapesApp::Update(const GameTime& Gt)
@@ -186,29 +255,35 @@ void ShapesApp::Draw(const GameTime& Gt)
 	ThrowIfFailed(SwapChain->Present(0, 0));
 	CurrentBackBuffer = (CurrentBackBuffer + 1) % 2;
 
-	CurrentFrameResource->FenceValue = ++GlobalFenceValue;
-	CommandQueue->Signal(Fence.Get(), GlobalFenceValue);
+	CurrentFrameResource->FenceValue = ++CurrentFenceValue;
+	CommandQueue->Signal(Fence.Get(), CurrentFenceValue);
 
 }
 
 void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<std::unique_ptr<RenderItem>>& RenderItem)
 {
 	auto PassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get() ;
-	auto ConstBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
-	CommandList->SetGraphicsRootConstantBufferView(0, ConstBufferGpuAddress);
+	auto PassBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
+	CommandList->SetGraphicsRootConstantBufferView(0, PassBufferGpuAddress);
 
 	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get() ;
+	auto DescHeapGpuAddress = DescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+
 	for (auto& RItem : RenderItem)
 	{
-		auto vbv = RItem->MeshGeometryData->VertexBufferView();
+		auto vbv = RItem->MeshGeometryRef->VertexBufferView();
 		CommandList->IASetVertexBuffers(0, 1, &vbv);
-		auto ibv = RItem->MeshGeometryData->IndexBufferView();
+		auto ibv = RItem->MeshGeometryRef->IndexBufferView();
 		CommandList->IASetIndexBuffer(&ibv);
 		CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		auto ObjConstBufferSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjConstBuffer));
 		auto ObjBufferGpuAddress = ObjConstBufferRes->GetResourceGpuAddress() + ObjConstBufferSize * RItem->ObjConstBufferIndex;
 		CommandList->SetGraphicsRootConstantBufferView(1, ObjBufferGpuAddress);
+
+		auto DescriptorTableGpuAddress = CD3DX12_GPU_DESCRIPTOR_HANDLE( DescHeapGpuAddress );
+		DescriptorTableGpuAddress.Offset(RItem->MaterialRef->DiffuseSrvHeapIndex, CbvSrvUavDescriptorSize);
+		CommandList->SetGraphicsRootDescriptorTable(2, DescriptorTableGpuAddress);
 
 		CommandList->DrawIndexedInstanced(RItem->IndexCount, 1, RItem->IndexStartLocation, RItem->VertexStartLocation, 0);
 	}
@@ -222,87 +297,135 @@ FrameResource<ShapesApp::PassConstBuffer,ShapesApp::ObjConstBuffer>* ShapesApp::
 
 void ShapesApp::BuildRootSignature()
 {
-	CD3DX12_ROOT_PARAMETER RootParameter[2];
+	const size_t TotalRootParameters = 3;
+	CD3DX12_ROOT_PARAMETER RootParameter[TotalRootParameters];
 	RootParameter[0].InitAsConstantBufferView(0,0);
 	RootParameter[1].InitAsConstantBufferView(1,0);
 
-	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(2, RootParameter,0,nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+	CD3DX12_DESCRIPTOR_RANGE TextureDescTable;
+	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
+	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable);
 
+	auto Samplers = d3dUtil::GetStaticSamplers();
+	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(TotalRootParameters, RootParameter, Samplers.size() , Samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 	Microsoft::WRL::ComPtr<ID3DBlob> SignatureBlob;
 	Microsoft::WRL::ComPtr<ID3DBlob> ErrorBlob;
-	ThrowIfFailed( D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1 , SignatureBlob.GetAddressOf(), ErrorBlob.GetAddressOf()));
-
-	ThrowIfFailed( DxDevice3D->CreateRootSignature(0, SignatureBlob->GetBufferPointer(), SignatureBlob->GetBufferSize(), IID_PPV_ARGS(RootSignature.GetAddressOf() )));
+	ThrowIfFailed( D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1 
+		, SignatureBlob.GetAddressOf(), ErrorBlob.GetAddressOf()));
+	ThrowIfFailed( DxDevice3D->CreateRootSignature(0, SignatureBlob->GetBufferPointer(),
+		SignatureBlob->GetBufferSize(), IID_PPV_ARGS(RootSignature.GetAddressOf() )));
 }
 
 void ShapesApp::BuildShadersAndInputLayout()
 {
 	InputLayouts.push_back(
-		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 
+		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,
 			0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
 
 	InputLayouts.push_back(
 		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT,
 			0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
 
+	InputLayouts.push_back(
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,
+			0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+
 	Shaders["Vertex"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["Pixel"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "PS", "ps_5_1");
 }
 
-void ShapesApp::BuildGeometry()
+void ShapesApp::BuildGeometryResource()
 {
+	// Plane geometry with regular UVs (no tiling)
 	auto PlaneMeshGeo = std::make_unique<MeshGeometry>();
-	PlaneMeshGeo->Name = "Surface";
-	const std::vector<float> Vertices =
+	PlaneMeshGeo->Name = "Plane";
+	const std::vector<float> PlaneVertices =
 	{
-		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  // bottom-left
-		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  // bottom-right
-		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  // top-left
-		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f   // top-right
+		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)
+		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f,  // bottom-left
+		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f,  // bottom-right
+		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // top-left
+		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f   // top-right
 	};
-	const std::vector<uint16_t> Indices =
+	const std::vector<uint16_t> PlaneIndices =
 	{
-		0, 2, 1,   
-		1, 2, 3    
+		0, 2, 1,
+		1, 2, 3
 	};
 
-	PlaneMeshGeo->VertexByteStride	   = 7 * sizeof(float);
-	PlaneMeshGeo->VertexBufferByteSize = static_cast<UINT>(Vertices.size() * sizeof(float));
+	PlaneMeshGeo->VertexByteStride	   = 9 * sizeof(float);
+	PlaneMeshGeo->VertexBufferByteSize = static_cast<UINT>(PlaneVertices.size() * sizeof(float));
 	PlaneMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)Vertices.data(), PlaneMeshGeo->VertexBufferByteSize, PlaneMeshGeo->VertexBufferUploader);
-	
-	PlaneMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
-	PlaneMeshGeo->IndexBufferByteSize  = static_cast<UINT>(Indices.size() * sizeof(uint16_t));
-	PlaneMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)Indices.data(), PlaneMeshGeo->IndexBufferByteSize, PlaneMeshGeo->IndexBufferUploader);
+									(void*)PlaneVertices.data(), PlaneMeshGeo->VertexBufferByteSize, PlaneMeshGeo->VertexBufferUploader);
 
-	SubmeshGeometry MeshPartition;
-	MeshPartition.BaseVertexLocation = 0;
-	MeshPartition.IndexCount = static_cast<UINT>(Indices.size());
-	PlaneMeshGeo->DrawArgs["Base"] = MeshPartition;
+	PlaneMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
+	PlaneMeshGeo->IndexBufferByteSize  = static_cast<UINT>(PlaneIndices.size() * sizeof(uint16_t));
+	PlaneMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+									(void*)PlaneIndices.data(), PlaneMeshGeo->IndexBufferByteSize, PlaneMeshGeo->IndexBufferUploader);
+
+	SubmeshGeometry PlaneMeshPartition;
+	PlaneMeshPartition.BaseVertexLocation = 0;
+	PlaneMeshPartition.IndexCount = static_cast<UINT>(PlaneIndices.size());
+	PlaneMeshGeo->DrawArgs["Base"] = PlaneMeshPartition;
 
 	MeshGeometries[PlaneMeshGeo->Name] = move(PlaneMeshGeo);
+
+	// Surface geometry with tiled UVs
+	auto SurfaceMeshGeo = std::make_unique<MeshGeometry>();
+	SurfaceMeshGeo->Name = "Surface";
+	const std::vector<float> SurfaceVertices =
+	{
+		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)
+		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 10.0f,  // bottom-left
+		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  10.0f, 10.0f,  // bottom-right
+		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // top-left
+		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f,  10.0f, 0.0f   // top-right
+	};
+	const std::vector<uint16_t> SurfaceIndices =
+	{
+		0, 2, 1,
+		1, 2, 3
+	};
+
+	SurfaceMeshGeo->VertexByteStride	   = 9 * sizeof(float);
+	SurfaceMeshGeo->VertexBufferByteSize = static_cast<UINT>(SurfaceVertices.size() * sizeof(float));
+	SurfaceMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+									(void*)SurfaceVertices.data(), SurfaceMeshGeo->VertexBufferByteSize, SurfaceMeshGeo->VertexBufferUploader);
+
+	SurfaceMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
+	SurfaceMeshGeo->IndexBufferByteSize  = static_cast<UINT>(SurfaceIndices.size() * sizeof(uint16_t));
+	SurfaceMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+									(void*)SurfaceIndices.data(), SurfaceMeshGeo->IndexBufferByteSize, SurfaceMeshGeo->IndexBufferUploader);
+
+	SubmeshGeometry SurfaceMeshPartition;
+	SurfaceMeshPartition.BaseVertexLocation = 0;
+	SurfaceMeshPartition.IndexCount = static_cast<UINT>(SurfaceIndices.size());
+	SurfaceMeshGeo->DrawArgs["Base"] = SurfaceMeshPartition;
+
+	MeshGeometries[SurfaceMeshGeo->Name] = move(SurfaceMeshGeo);
 }
 
-void ShapesApp::BuildRenderItem()
+void ShapesApp::BuildRenderItems()
 {
 	std::unique_ptr<RenderItem> PlaneMesh = std::make_unique<RenderItem>();
 	DirectX::XMStoreFloat4x4(&PlaneMesh->World, DirectX::XMMatrixIdentity());
 	PlaneMesh->ObjConstBufferIndex = 0;
-	PlaneMesh->MeshGeometryData = MeshGeometries["Surface"].get();
-	PlaneMesh->IndexCount = PlaneMesh->MeshGeometryData->DrawArgs["Base"].IndexCount;
-	PlaneMesh->IndexStartLocation = PlaneMesh->MeshGeometryData->DrawArgs["Base"].StartIndexLocation;
-	PlaneMesh->VertexStartLocation = PlaneMesh->MeshGeometryData->DrawArgs["Base"].BaseVertexLocation;
+	PlaneMesh->MeshGeometryRef = MeshGeometries["Plane"].get();
+	PlaneMesh->MaterialRef = GetMaterialForTexture("Texice");
+	PlaneMesh->IndexCount = PlaneMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
+	PlaneMesh->IndexStartLocation = PlaneMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
+	PlaneMesh->VertexStartLocation = PlaneMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
 	RenderItems.push_back( move(PlaneMesh) );
 	
 	std::unique_ptr<RenderItem> SurfaceMesh = std::make_unique<RenderItem>();
 	DirectX::XMStoreFloat4x4(&SurfaceMesh->World, DirectX::XMMatrixScaling(10,10,1)
 		*DirectX::XMMatrixRotationX(DirectX::XM_PIDIV2)*DirectX::XMMatrixTranslation(0.0f,-2.0f,0.0f));
 	SurfaceMesh->ObjConstBufferIndex = 1;
-	SurfaceMesh->MeshGeometryData = MeshGeometries["Surface"].get();
-	SurfaceMesh->IndexCount = SurfaceMesh->MeshGeometryData->DrawArgs["Base"].IndexCount;
-	SurfaceMesh->IndexStartLocation = SurfaceMesh->MeshGeometryData->DrawArgs["Base"].StartIndexLocation;
-	SurfaceMesh->VertexStartLocation = SurfaceMesh->MeshGeometryData->DrawArgs["Base"].BaseVertexLocation;
+	SurfaceMesh->MeshGeometryRef = MeshGeometries["Surface"].get();
+	SurfaceMesh->MaterialRef = GetMaterialForTexture("Texcheckboard");
+	SurfaceMesh->IndexCount = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
+	SurfaceMesh->IndexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
+	SurfaceMesh->VertexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
 	RenderItems.push_back( move(SurfaceMesh) );
 }
 
@@ -316,25 +439,20 @@ void ShapesApp::BuildFrameResources()
 
 void ShapesApp::BuildDescriptorHeap()
 {
+	std::string TextureDirectory = "Assets\\Textures\\Diffuse";
+	assert(std::filesystem::exists(TextureDirectory));
+	UINT TexturesCount{0};  // @TODO Handle for Normal Textures
+	for (auto Entry : std::filesystem::directory_iterator(TextureDirectory))
+		if (Entry.is_regular_file() && Entry.path().extension() == ".dds")
+			TexturesCount++;
+
 	D3D12_DESCRIPTOR_HEAP_DESC HeapDesc;
 	HeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	HeapDesc.NodeMask = 0;
-	HeapDesc.NumDescriptors = 2;
+	HeapDesc.NumDescriptors = TexturesCount;
 	HeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
 	ThrowIfFailed( DxDevice3D->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&DescriptorHeap)) );
-}
-
-void ShapesApp::BuildDescriptors()
-{
-	/*auto ConstBufferSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ConstBuffer));
-
-	D3D12_CONSTANT_BUFFER_VIEW_DESC CBVdesriptor;
-	CBVdesriptor.BufferLocation = ConstBufferResource->GetResourceGpuAddress();
-	CBVdesriptor.SizeInBytes = ConstBufferSize;
-
-	auto HeapAddress = CD3DX12_CPU_DESCRIPTOR_HANDLE(DescriptorHeap->GetCPUDescriptorHandleForHeapStart());
-	DxDevice3D->CreateConstantBufferView(&CBVdesriptor, HeapAddress);*/
 }
 
 void ShapesApp::BuildPSO()

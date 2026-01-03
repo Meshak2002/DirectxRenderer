@@ -34,34 +34,39 @@ private:
 
 	void BuildRootSignature();
 	void BuildShadersAndInputLayout();
-	void BuildGeometry();
-	void BuildRenderItem();
+	void BuildGeometryResource();
+	void BuildRenderItems();
 	void BuildFrameResources();
 	void BuildDescriptorHeap();
-	void BuildDescriptors();
 	void BuildPSO();
-
+	//OnDraw
 	void UpdateConstBuffers();
 	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<std::unique_ptr<RenderItem>>& RenderItem);
 
+	void InitCamera();
+	void BuildTextures();
+	void BuildMaterials();
+	Material* GetMaterialForTexture(std::string TexName);
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DescriptorHeap;
-	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> Shaders;
-	Microsoft::WRL::ComPtr<ID3D12PipelineState> PSO;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayouts;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> PSO;
+	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DescriptorHeap;
 
+
+	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> Shaders;
+	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> MeshGeometries;
+	std::unordered_map<std::string, std::unique_ptr<Texture>> Textures;
+	std::unordered_map<std::string, std::unique_ptr<Material>> Materials;
 
 	std::vector<std::unique_ptr<FrameResource<PassConstBuffer,ObjConstBuffer>>> FrameResources;
+	std::vector<std::unique_ptr<RenderItem>> RenderItems;
+
+
 	UINT TotalFrameResources = 3;
 	UINT CurrentFrameResourceIndex{UINT_MAX};
-	
-	std::vector<std::unique_ptr<RenderItem>> RenderItems;
-	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> MeshGeometries;
-	
-	std::unique_ptr<Camera> ViewCamera;
 	POINT MouseLastPos;
-	
+	std::unique_ptr<Camera> ViewCamera;
 
 protected:
 	FrameResource<PassConstBuffer,ObjConstBuffer>* GetCurrentFrameResource() const;
@@ -78,7 +83,8 @@ struct ShapesApp::RenderItem
 	RenderItem() = default;
 	DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();
 	UINT ObjConstBufferIndex = -1;
-	MeshGeometry* MeshGeometryData;
+	MeshGeometry* MeshGeometryRef;
+	Material* MaterialRef;
 
 	//For Multiple Objects on Same MeshGeometryData
 	UINT IndexCount;

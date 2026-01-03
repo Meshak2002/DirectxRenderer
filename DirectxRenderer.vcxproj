@@ -173,6 +173,19 @@
   <ItemGroup>
     <None Include="src\Shaders\ShapesApp.hlsl" />
   </ItemGroup>
+  <ItemGroup>
+    <Image Include="Assets\Textures\Diffuse\bricks.dds" />
+    <Image Include="Assets\Textures\Diffuse\bricks2.dds" />
+    <Image Include="Assets\Textures\Diffuse\bricks3.dds" />
+    <Image Include="Assets\Textures\Diffuse\checkboard.dds" />
+    <Image Include="Assets\Textures\Diffuse\grass.dds" />
+    <Image Include="Assets\Textures\Diffuse\ice.dds" />
+    <Image Include="Assets\Textures\Diffuse\stone.dds" />
+    <Image Include="Assets\Textures\Diffuse\tile.dds" />
+    <Image Include="Assets\Textures\Diffuse\water1.dds" />
+    <Image Include="Assets\Textures\Diffuse\WoodCrate01.dds" />
+    <Image Include="Assets\Textures\Diffuse\WoodCrate02.dds" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
