@@ -148,14 +148,14 @@ void ShapesApp::BuildTextures()
 
 void ShapesApp::BuildMaterials()
 {
-	//Build For All Textures : 
+	//Build For All Textures :
 	for(const auto& [Key,Value] : Textures)
 	{
 		auto NewMaterial = std::make_unique<Material>();
 		NewMaterial->DiffuseSrvHeapIndex = Textures[Key]->HeapIndex;
-		//	..... @TODO
-		//	...
-		//	..
+		NewMaterial->DiffuseAlbedo = DirectX::XMFLOAT4(1,1,1,1);
+		NewMaterial->FresnelR0 = DirectX::XMFLOAT3(0.2f, 0.2f, 0.2f);  // Increased for more visible specular
+		NewMaterial->Roughness = 0.1f;  // Lower roughness = sharper, more visible highlights
 		Materials[std::string("Mat")+ Key] = move(NewMaterial);
 	}
 }
@@ -193,19 +193,36 @@ void ShapesApp::UpdateConstBuffers()
 {
 	auto PassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get();
 	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get();
+	auto MatConstBufferRes = GetCurrentFrameResource()->MatConstBufferRes.get();
 	int ObjConstBufferIndex = 0;
 
 
 	DirectX::XMMATRIX XView = ViewCamera->GetView();
 	DirectX::XMMATRIX XProj = ViewCamera->GetProj();
 	DirectX::XMMATRIX XViewProj = DirectX::XMMatrixMultiply(XView, XProj);
+	auto EyePos = ViewCamera->GetPosition3f();
 
-	PassConstBuffer PassConstBufferData;
+	PassConstBuffer PassConstBufferData = {};
 	// Transpose before sending to GPU! Which changes row majour to column majour
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.View, DirectX::XMMatrixTranspose(XView));
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.Proj, DirectX::XMMatrixTranspose(XProj));
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.ViewProj, DirectX::XMMatrixTranspose(XViewProj));
+	PassConstBufferData.Eye = EyePos;
+
+	// Light 0: Upper-right key light (creates specular highlights on plane)
+	PassConstBufferData.Lights[0].Direction = { -0.57735f, -0.57735f, -0.57735f };  // normalized(-1, -1, -1)
+	PassConstBufferData.Lights[0].Strength = { 0.4f, 0.4f, 0.4f };
+
+	// Light 1: Top-down light (illuminates floor)
+	PassConstBufferData.Lights[1].Direction = { 0, 1, 0 };
+	PassConstBufferData.Lights[1].Strength = { 0.7f, 0.7f, 0.7f };
+
+	// Light 2: Soft fill light from left (reduces harsh shadows)
+	PassConstBufferData.Lights[2].Direction = { 0.7071f, -0.0f, 0.7071f };  // normalized(1, 0, -1)
+	PassConstBufferData.Lights[2].Strength = { 0.8f, 0.8f, 0.8f };
+
 	PassConstBufferRes->CopyData(0, PassConstBufferData);
+
 
 	for (auto& RenderItem : RenderItems)
 	{
@@ -213,6 +230,14 @@ void ShapesApp::UpdateConstBuffers()
 		ObjConstBuffer  ObjConstBufferData;
 		DirectX::XMStoreFloat4x4(&ObjConstBufferData.World, DirectX::XMMatrixTranspose(XWorld));
 		ObjConstBufferRes->CopyData(ObjConstBufferIndex, ObjConstBufferData);
+
+		MaterialConstBuffer MatConstBufferData
+		{
+			RenderItem->MaterialRef->DiffuseAlbedo,
+			RenderItem->MaterialRef->FresnelR0,
+			RenderItem->MaterialRef->Roughness
+		};
+		MatConstBufferRes->CopyData(ObjConstBufferIndex, MatConstBufferData);
 		ObjConstBufferIndex++;
 	}
 }
@@ -267,6 +292,7 @@ void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vec
 	CommandList->SetGraphicsRootConstantBufferView(0, PassBufferGpuAddress);
 
 	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get() ;
+	auto MatConstBufferRes = GetCurrentFrameResource()->MatConstBufferRes.get() ;
 	auto DescHeapGpuAddress = DescriptorHeap->GetGPUDescriptorHandleForHeapStart();
 
 	for (auto& RItem : RenderItem)
@@ -285,11 +311,15 @@ void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vec
 		DescriptorTableGpuAddress.Offset(RItem->MaterialRef->DiffuseSrvHeapIndex, CbvSrvUavDescriptorSize);
 		CommandList->SetGraphicsRootDescriptorTable(2, DescriptorTableGpuAddress);
 
+		auto MatConstBufferSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstBuffer));
+		auto MatBufferGpuAddress = MatConstBufferRes->GetResourceGpuAddress() + MatConstBufferSize * RItem->ObjConstBufferIndex;
+		CommandList->SetGraphicsRootConstantBufferView(3, MatBufferGpuAddress);
+
 		CommandList->DrawIndexedInstanced(RItem->IndexCount, 1, RItem->IndexStartLocation, RItem->VertexStartLocation, 0);
 	}
 }
 
-FrameResource<ShapesApp::PassConstBuffer,ShapesApp::ObjConstBuffer>* ShapesApp::GetCurrentFrameResource() const
+FrameResource<ShapesApp::PassConstBuffer,ShapesApp::ObjConstBuffer,ShapesApp::MaterialConstBuffer>* ShapesApp::GetCurrentFrameResource() const
 {
 	assert((CurrentFrameResourceIndex>=0 && CurrentFrameResourceIndex < FrameResources.size()) && "Trying to get FrameRes REF with an invalid Index");
 	return FrameResources[CurrentFrameResourceIndex].get();
@@ -297,7 +327,7 @@ FrameResource<ShapesApp::PassConstBuffer,ShapesApp::ObjConstBuffer>* ShapesApp::
 
 void ShapesApp::BuildRootSignature()
 {
-	const size_t TotalRootParameters = 3;
+	const size_t TotalRootParameters = 4;
 	CD3DX12_ROOT_PARAMETER RootParameter[TotalRootParameters];
 	RootParameter[0].InitAsConstantBufferView(0,0);
 	RootParameter[1].InitAsConstantBufferView(1,0);
@@ -305,6 +335,8 @@ void ShapesApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE TextureDescTable;
 	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
 	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable);
+
+	RootParameter[3].InitAsConstantBufferView(2,0);	//Material
 
 	auto Samplers = d3dUtil::GetStaticSamplers();
 	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(TotalRootParameters, RootParameter, Samplers.size() , Samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
@@ -329,6 +361,9 @@ void ShapesApp::BuildShadersAndInputLayout()
 	InputLayouts.push_back(
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,
 			0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+	InputLayouts.push_back(
+		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT,
+			0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
 
 	Shaders["Vertex"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["Pixel"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "PS", "ps_5_1");
@@ -336,50 +371,98 @@ void ShapesApp::BuildShadersAndInputLayout()
 
 void ShapesApp::BuildGeometryResource()
 {
-	// Plane geometry with regular UVs (no tiling)
-	auto PlaneMeshGeo = std::make_unique<MeshGeometry>();
-	PlaneMeshGeo->Name = "Plane";
-	const std::vector<float> PlaneVertices =
+	// Cube geometry with regular UVs (no tiling)
+	auto CubeMeshGeo = std::make_unique<MeshGeometry>();
+	CubeMeshGeo->Name = "Cube";
+	const std::vector<float> CubeVertices =
 	{
-		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)
-		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f,  // bottom-left
-		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f,  // bottom-right
-		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // top-left
-		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f   // top-right
+		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)  Normal (x,y,z)
+
+		// Front face (+Z)
+		-0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f,  0.0f, 0.0f, 1.0f,  // 0
+		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  // 1
+		 0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f, 1.0f,  1.0f, 0.0f,  0.0f, 0.0f, 1.0f,  // 2
+		-0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 0.0f,  0.0f, 0.0f, 1.0f,  // 3
+
+		// Back face (-Z)
+		 0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f,  0.0f, 0.0f, -1.0f, // 4
+		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f,  0.0f, 0.0f, -1.0f, // 5
+		-0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  0.0f, 0.0f, -1.0f, // 6
+		 0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, 1.0f,  0.0f, 0.0f,  0.0f, 0.0f, -1.0f, // 7
+
+		// Top face (+Y)
+		-0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f,  0.0f, 1.0f, 0.0f,  // 8
+		 0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f,  0.0f, 1.0f, 0.0f,  // 9
+		 0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, 1.0f,  1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  // 10
+		-0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  // 11
+
+		// Bottom face (-Y)
+		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f,  0.0f, -1.0f, 0.0f, // 12
+		 0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f,  0.0f, -1.0f, 0.0f, // 13
+		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f,  0.0f, -1.0f, 0.0f, // 14
+		-0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 0.0f,  0.0f, -1.0f, 0.0f, // 15
+
+		// Right face (+X)
+		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 16
+		 0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 17
+		 0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, 1.0f,  1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 18
+		 0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 19
+
+		// Left face (-X)
+		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f,  -1.0f, 0.0f, 0.0f, // 20
+		-0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  -1.0f, 0.0f, 0.0f, // 21
+		-0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f,  -1.0f, 0.0f, 0.0f, // 22
+		-0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  -1.0f, 0.0f, 0.0f  // 23
 	};
-	const std::vector<uint16_t> PlaneIndices =
+	const std::vector<uint16_t> CubeIndices =
 	{
-		0, 2, 1,
-		1, 2, 3
+		// Front face
+		0, 1, 2,
+		0, 2, 3,
+		// Back face
+		4, 5, 6,
+		4, 6, 7,
+		// Top face
+		8, 9, 10,
+		8, 10, 11,
+		// Bottom face
+		12, 13, 14,
+		12, 14, 15,
+		// Right face
+		16, 17, 18,
+		16, 18, 19,
+		// Left face
+		20, 21, 22,
+		20, 22, 23
 	};
 
-	PlaneMeshGeo->VertexByteStride	   = 9 * sizeof(float);
-	PlaneMeshGeo->VertexBufferByteSize = static_cast<UINT>(PlaneVertices.size() * sizeof(float));
-	PlaneMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)PlaneVertices.data(), PlaneMeshGeo->VertexBufferByteSize, PlaneMeshGeo->VertexBufferUploader);
+	CubeMeshGeo->VertexByteStride	   = 12 * sizeof(float);
+	CubeMeshGeo->VertexBufferByteSize = static_cast<UINT>(CubeVertices.size() * sizeof(float));
+	CubeMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+									(void*)CubeVertices.data(), CubeMeshGeo->VertexBufferByteSize, CubeMeshGeo->VertexBufferUploader);
 
-	PlaneMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
-	PlaneMeshGeo->IndexBufferByteSize  = static_cast<UINT>(PlaneIndices.size() * sizeof(uint16_t));
-	PlaneMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)PlaneIndices.data(), PlaneMeshGeo->IndexBufferByteSize, PlaneMeshGeo->IndexBufferUploader);
+	CubeMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
+	CubeMeshGeo->IndexBufferByteSize  = static_cast<UINT>(CubeIndices.size() * sizeof(uint16_t));
+	CubeMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+									(void*)CubeIndices.data(), CubeMeshGeo->IndexBufferByteSize, CubeMeshGeo->IndexBufferUploader);
 
-	SubmeshGeometry PlaneMeshPartition;
-	PlaneMeshPartition.BaseVertexLocation = 0;
-	PlaneMeshPartition.IndexCount = static_cast<UINT>(PlaneIndices.size());
-	PlaneMeshGeo->DrawArgs["Base"] = PlaneMeshPartition;
+	SubmeshGeometry CubeMeshPartition;
+	CubeMeshPartition.BaseVertexLocation = 0;
+	CubeMeshPartition.IndexCount = static_cast<UINT>(CubeIndices.size());
+	CubeMeshGeo->DrawArgs["Base"] = CubeMeshPartition;
 
-	MeshGeometries[PlaneMeshGeo->Name] = move(PlaneMeshGeo);
+	MeshGeometries[CubeMeshGeo->Name] = move(CubeMeshGeo);
 
 	// Surface geometry with tiled UVs
 	auto SurfaceMeshGeo = std::make_unique<MeshGeometry>();
 	SurfaceMeshGeo->Name = "Surface";
 	const std::vector<float> SurfaceVertices =
 	{
-		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)
-		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 10.0f,  // bottom-left
-		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  10.0f, 10.0f,  // bottom-right
-		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  // top-left
-		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f,  10.0f, 0.0f   // top-right
+		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)  Normal (x,y,z)
+		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 10.0f,  0.0f, 0.0f, 1.0f,  // bottom-left
+		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  10.0f, 10.0f,  0.0f, 0.0f, 1.0f,  // bottom-right
+		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  0.0f, 0.0f, 1.0f,  // top-left
+		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f,  10.0f, 0.0f,  0.0f, 0.0f, 1.0f   // top-right
 	};
 	const std::vector<uint16_t> SurfaceIndices =
 	{
@@ -387,7 +470,7 @@ void ShapesApp::BuildGeometryResource()
 		1, 2, 3
 	};
 
-	SurfaceMeshGeo->VertexByteStride	   = 9 * sizeof(float);
+	SurfaceMeshGeo->VertexByteStride	   = 12 * sizeof(float);
 	SurfaceMeshGeo->VertexBufferByteSize = static_cast<UINT>(SurfaceVertices.size() * sizeof(float));
 	SurfaceMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
 									(void*)SurfaceVertices.data(), SurfaceMeshGeo->VertexBufferByteSize, SurfaceMeshGeo->VertexBufferUploader);
@@ -407,15 +490,15 @@ void ShapesApp::BuildGeometryResource()
 
 void ShapesApp::BuildRenderItems()
 {
-	std::unique_ptr<RenderItem> PlaneMesh = std::make_unique<RenderItem>();
-	DirectX::XMStoreFloat4x4(&PlaneMesh->World, DirectX::XMMatrixIdentity());
-	PlaneMesh->ObjConstBufferIndex = 0;
-	PlaneMesh->MeshGeometryRef = MeshGeometries["Plane"].get();
-	PlaneMesh->MaterialRef = GetMaterialForTexture("Texice");
-	PlaneMesh->IndexCount = PlaneMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
-	PlaneMesh->IndexStartLocation = PlaneMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
-	PlaneMesh->VertexStartLocation = PlaneMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
-	RenderItems.push_back( move(PlaneMesh) );
+	std::unique_ptr<RenderItem> CubeMesh = std::make_unique<RenderItem>();
+	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixIdentity());
+	CubeMesh->ObjConstBufferIndex = 0;
+	CubeMesh->MeshGeometryRef = MeshGeometries["Cube"].get();
+	CubeMesh->MaterialRef = GetMaterialForTexture("Texice");
+	CubeMesh->IndexCount = CubeMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
+	CubeMesh->IndexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
+	CubeMesh->VertexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
+	RenderItems.push_back( move(CubeMesh) );
 	
 	std::unique_ptr<RenderItem> SurfaceMesh = std::make_unique<RenderItem>();
 	DirectX::XMStoreFloat4x4(&SurfaceMesh->World, DirectX::XMMatrixScaling(10,10,1)
@@ -434,7 +517,7 @@ void ShapesApp::BuildFrameResources()
 	UINT RenderItemCount = static_cast<UINT>(RenderItems.size()); //Total Const Buffer Data we needed
 	UINT TotalPass = 1;
 	for (UINT i = 0; i < TotalFrameResources; i++)
-		FrameResources.push_back(std::make_unique<FrameResource<PassConstBuffer,ObjConstBuffer>>(DxDevice3D.Get(), TotalPass, RenderItemCount));
+		FrameResources.push_back(std::make_unique<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>(DxDevice3D.Get(), TotalPass, RenderItemCount, RenderItemCount));
 }
 
 void ShapesApp::BuildDescriptorHeap()

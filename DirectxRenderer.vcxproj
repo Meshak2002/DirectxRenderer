@@ -186,6 +186,9 @@
     <Image Include="Assets\Textures\Diffuse\WoodCrate01.dds" />
     <Image Include="Assets\Textures\Diffuse\WoodCrate02.dds" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\LightingUtil.hlsl" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

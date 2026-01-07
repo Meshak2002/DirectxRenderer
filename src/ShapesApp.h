@@ -31,6 +31,7 @@ private:
 	struct RenderItem;
 	struct ObjConstBuffer;
 	struct PassConstBuffer;
+	struct MaterialConstBuffer;
 
 	void BuildRootSignature();
 	void BuildShadersAndInputLayout();
@@ -59,7 +60,7 @@ private:
 	std::unordered_map<std::string, std::unique_ptr<Texture>> Textures;
 	std::unordered_map<std::string, std::unique_ptr<Material>> Materials;
 
-	std::vector<std::unique_ptr<FrameResource<PassConstBuffer,ObjConstBuffer>>> FrameResources;
+	std::vector<std::unique_ptr<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>> FrameResources;
 	std::vector<std::unique_ptr<RenderItem>> RenderItems;
 
 
@@ -69,7 +70,7 @@ private:
 	std::unique_ptr<Camera> ViewCamera;
 
 protected:
-	FrameResource<PassConstBuffer,ObjConstBuffer>* GetCurrentFrameResource() const;
+	FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>* GetCurrentFrameResource() const;
 };
 
 
@@ -102,4 +103,14 @@ struct ShapesApp::PassConstBuffer
 	DirectX::XMFLOAT4X4 View;
 	DirectX::XMFLOAT4X4 Proj;
 	DirectX::XMFLOAT4X4 ViewProj;
+	DirectX::XMFLOAT3	Eye;
+	float Padding;  // Align Lights array to 16-byte boundary for HLSL
+	Light Lights[16];
+};
+
+struct ShapesApp::MaterialConstBuffer
+{
+	DirectX::XMFLOAT4 DiffuseAlbedo;
+	DirectX::XMFLOAT3 FresnelRO;
+	float Shinnines;
 };
