@@ -2,6 +2,11 @@
 #include "ShapesApp.h"
 #include "SimpleScreenApp.h"
 
+#if defined(DEBUG) || defined(_DEBUG)
+#define CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#endif
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, PSTR cmdLine, int showCmd)
 {
 #if  defined(_DEBUG) || defined(DEBUG)

@@ -41,6 +41,12 @@
     <ClCompile Include="src\Utility\Camera.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Utility\ModelImporter.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Utility\TextureConverter.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Base\DxRenderBase.h">
@@ -61,6 +67,12 @@
     <ClInclude Include="src\Utility\MathHelper.h">
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
+    <ClInclude Include="src\Utility\ModelImporter.h">
+      <Filter>Source Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Utility\TextureConverter.h">
+      <Filter>Source Files\Utility</Filter>
+    </ClInclude>
     <ClInclude Include="src\ShapesApp.h" />
     <ClInclude Include="src\Utility\Objects\UploadBuffer.h" />
     <ClInclude Include="src\Utility\Objects\FrameResource.h" />
@@ -68,6 +80,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\ShapesApp.hlsl" />
+    <None Include="src\Shaders\LightingUtil.hlsl" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\Textures\Diffuse\bricks.dds" />
@@ -81,10 +95,10 @@
     <Image Include="Assets\Textures\Diffuse\water1.dds" />
     <Image Include="Assets\Textures\Diffuse\WoodCrate01.dds" />
     <Image Include="Assets\Textures\Diffuse\WoodCrate02.dds" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="src\Shaders\LightingUtil.hlsl">
-      <Filter>Shaders</Filter>
-    </None>
+    <Image Include="Assets\Textures\Normals\bricks_nmap.dds" />
+    <Image Include="Assets\Textures\Normals\bricks2_nmap.dds" />
+    <Image Include="Assets\Textures\Normals\default_nmap.dds" />
+    <Image Include="Assets\Textures\Normals\head_norm.dds" />
+    <Image Include="Assets\Textures\Normals\tile_nmap.dds" />
   </ItemGroup>
 </Project>

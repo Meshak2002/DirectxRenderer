@@ -6,6 +6,10 @@
 
 #pragma once
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <windows.h>
 #include <wrl.h>
 #include <dxgi1_4.h>
@@ -275,6 +279,7 @@ struct Texture
 	Microsoft::WRL::ComPtr<ID3D12Resource> Resource = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12Resource> UploadHeap = nullptr;
 	UINT HeapIndex=-1;
+    bool bIsDiffusedTexture = true;
 };
 
 #ifndef ThrowIfFailed

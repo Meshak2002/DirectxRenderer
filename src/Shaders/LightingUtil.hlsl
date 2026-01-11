@@ -29,6 +29,20 @@ float CalcAttenuation(float d, float falloffStart, float falloffEnd)
     return saturate((falloffEnd-d) / (falloffEnd - falloffStart));
 }
 
+float3 NormalSampleToWorldPos(float3 NormalSample , float3 UnitNormalW , float3 TangentW)
+{
+    float3 VectorNormalizedSample = NormalSample * 2 - 1; //Maps [0,1] to [-1,1]
+    
+    float3 NormalizedNormalW = UnitNormalW;
+    float3 NormalizedTangentW = normalize(TangentW - dot(NormalizedNormalW, TangentW) * NormalizedNormalW);
+    float3 NormalizedBiTangent = cross(NormalizedNormalW, NormalizedTangentW);
+    
+    float3x3 NormalWorldSpace = float3x3(NormalizedTangentW, NormalizedBiTangent, NormalizedNormalW);
+    float3 WorldPos = mul(VectorNormalizedSample, NormalWorldSpace);
+    
+    return WorldPos;
+}
+
 // Schlick gives an approximation to Fresnel reflectance (see pg. 233 "Real-Time Rendering 3rd Ed.").
 // R0 = ( (n-1)/(n+1) )^2, where n is the index of refraction.
 float3 SchlickFresnel(float3 R0, float3 normal, float3 lightVec)

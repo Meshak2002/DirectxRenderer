@@ -8,6 +8,10 @@
 
 #include "Utility/Camera.h"
 
+// Maximum number of textures that can be bound at once
+// This must match the shader array size: Texture2D DiffuseTexture[MAX_TEXTURES]
+static constexpr UINT MAX_TEXTURES = 512;
+
 class ShapesApp : public DxRenderBase
 {
 public:
@@ -15,7 +19,7 @@ public:
 	ShapesApp(const ShapesApp& ScreenApp) = delete;
 	ShapesApp& operator=(ShapesApp& ScreenApp) = delete;
 
-	virtual ~ShapesApp() override;
+	~ShapesApp();
 
 	virtual bool Initialize() override;
 	virtual void Update(const GameTime& Gt) override;
@@ -48,6 +52,8 @@ private:
 	void BuildTextures();
 	void BuildMaterials();
 	Material* GetMaterialForTexture(std::string TexName);
+
+	UINT GetHeapIndexOfTexture(std::string TexName);
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayouts;
@@ -113,4 +119,7 @@ struct ShapesApp::MaterialConstBuffer
 	DirectX::XMFLOAT4 DiffuseAlbedo;
 	DirectX::XMFLOAT3 FresnelRO;
 	float Shinnines;
+
+	UINT DiffuseTexIndex;
+	UINT NormalTexIndex;
 };

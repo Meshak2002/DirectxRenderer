@@ -1,9 +1,42 @@
 #include "ShapesApp.h"
 #include "DirectXMath.h"
 #include "iostream"
+#include "Utility/ModelImporter.h"
+#include "Utility/TextureConverter.h"
 #include <filesystem>
 
 const int gNumFrameResources = 3;
+
+
+void ConvertToDDsTexturesOnStartup()
+{
+	std::cout << "\n===== AUTO-CONVERTING MODEL TEXTURES =====" << std::endl;
+
+	// Set up conversion options
+	TextureConverter::ConversionOptions options;
+	options.Format = TextureConverter::CompressionFormat::BC7_UNORM;  // High quality compression
+	options.Speed = TextureConverter::CompressionSpeed::QUICK;
+	options.GenerateMipmaps   = true;     
+	options.OverwriteExisting = false;   
+	options.FlipVertical      = false;       
+
+	auto results = TextureConverter::ConvertDirectory(
+		"Assets\\Models",       // Search in this folder
+		"Assets\\Textures",     // Empty string = save DDS in same folder as source
+		options,
+		true                    // true = search subdirectories recursively (Assets\Models\SMG\*.jpg, etc.)
+	);
+
+	int successCount = 0;
+	for (const auto& result : results)
+	{
+		if (result.Success)
+			successCount++;
+	}
+
+	std::cout << "✓ Converted " << successCount << " / " << results.size() << " textures" << std::endl;
+	std::cout << "===== CONVERSION COMPLETE =====" << std::endl;
+}
 
 ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance)
 {
@@ -77,9 +110,9 @@ bool ShapesApp::Initialize()
 {
 	if (!DxRenderBase::Initialize())
 		return false;
+	ConvertToDDsTexturesOnStartup();
 
 	InitCamera();
-
 	ThrowIfFailed(CommandList->Reset(CommandAlloc.Get(), nullptr));
 
 	BuildRootSignature();
@@ -117,18 +150,23 @@ void ShapesApp::BuildTextures()
 	UINT TexturesCount = 0;
 	auto DescHeapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE( DescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	std::string TextureDirectory = "Assets\\Textures\\Diffuse";
+	std::string TextureDirectory = "Assets\\Textures";
 	assert(std::filesystem::exists(TextureDirectory));
 
 	//Create Diffuse Textures
-	for (auto Entry : std::filesystem::directory_iterator(TextureDirectory))
+	for (auto Entry : std::filesystem::recursive_directory_iterator(TextureDirectory))
 	{
 		if (!Entry.is_regular_file() || Entry.path().extension() != ".dds")
 			continue;
 		auto NewTexture = std::make_unique<Texture>();
-		NewTexture->Name =  "Tex" + Entry.path().stem().string();
+		auto OriginalFileName = Entry.path().stem().string();
+		if (TextureConverter::IsGivenFileaNormalMap(OriginalFileName))
+			NewTexture->bIsDiffusedTexture = false;
+
+		NewTexture->Name =  "Tex_" + OriginalFileName;
 		NewTexture->Filename = Entry.path().wstring();
 		NewTexture->HeapIndex = TexturesCount;
+
 		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(DxDevice3D.Get(), CommandList.Get(),
 			NewTexture->Filename.c_str(), NewTexture->Resource, NewTexture->UploadHeap));
 
@@ -144,32 +182,48 @@ void ShapesApp::BuildTextures()
 		Textures[NewTexture->Name] = move(NewTexture);
 		TexturesCount++;
 	}
-}
+} 
 
 void ShapesApp::BuildMaterials()
 {
-	//Build For All Textures :
 	for(const auto& [Key,Value] : Textures)
 	{
+		if (!Value->bIsDiffusedTexture)
+			continue;
 		auto NewMaterial = std::make_unique<Material>();
 		NewMaterial->DiffuseSrvHeapIndex = Textures[Key]->HeapIndex;
 		NewMaterial->DiffuseAlbedo = DirectX::XMFLOAT4(1,1,1,1);
 		NewMaterial->FresnelR0 = DirectX::XMFLOAT3(0.2f, 0.2f, 0.2f);  // Increased for more visible specular
 		NewMaterial->Roughness = 0.1f;  // Lower roughness = sharper, more visible highlights
-		Materials[std::string("Mat")+ Key] = move(NewMaterial);
+		Materials[std::string("Mat_")+ Key] = move(NewMaterial);
 	}
 }
 
 Material* ShapesApp::GetMaterialForTexture(std::string TexName)
 {
-	auto MaterialRef =  Materials[std::string("Mat") + TexName].get();
-	if(!MaterialRef)
+	auto TextureName = "Mat_" + TexName;
+	auto it = Materials.find(TextureName);
+	if (it == Materials.end())
 	{
-		std::string ErrorMsg = "Material for the given Texture name is not present: " + TexName + "\n";
+		std::string ErrorMsg = "Material not found: " + TextureName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(MaterialRef && "Material for the given Texture name is not present");
+		assert(false && "Material for the given Texture name is not present");
+		return nullptr;
 	}
-	return MaterialRef;
+	return it->second.get();
+}
+
+UINT ShapesApp::GetHeapIndexOfTexture(std::string TexName)
+{
+	auto it = Textures.find(TexName);
+	if (it == Textures.end())
+	{
+		std::string ErrorMsg = "Texture not found: " + TexName + "\n";
+		::OutputDebugStringA(ErrorMsg.c_str());
+		assert(false && "Texture name is not present");
+		return -1;
+	}
+	return it->second.get()->HeapIndex;
 }
 
 void ShapesApp::Update(const GameTime& Gt)
@@ -213,15 +267,15 @@ void ShapesApp::UpdateConstBuffers()
 	PassConstBufferData.Lights[0].Direction = { -0.57735f, -0.57735f, -0.57735f };  // normalized(-1, -1, -1)
 	PassConstBufferData.Lights[0].Strength = { 0.4f, 0.4f, 0.4f };
 
-	// Light 1: Top-down light (illuminates floor)
-	PassConstBufferData.Lights[1].Direction = { 0, 1, 0 };
-	PassConstBufferData.Lights[1].Strength = { 0.7f, 0.7f, 0.7f };
+	// Light 1: Top-down light (illuminates floor)					
+	PassConstBufferData.Lights[1].Direction = { 0, 1, 0 };			
+	PassConstBufferData.Lights[1].Strength = { 0.7f, 0.7f, 0.7f };	
 
-	// Light 2: Soft fill light from left (reduces harsh shadows)
-	PassConstBufferData.Lights[2].Direction = { 0.7071f, -0.0f, 0.7071f };  // normalized(1, 0, -1)
-	PassConstBufferData.Lights[2].Strength = { 0.8f, 0.8f, 0.8f };
+	// Light 2: Soft fill light from left (reduces harsh shadows)										
+	PassConstBufferData.Lights[2].Direction = { 0.7071f, -0.0f, 0.7071f };  // normalized(1, 0, -1)	
+	PassConstBufferData.Lights[2].Strength = { 0.8f, 0.8f, 0.8f };									
 
-	PassConstBufferRes->CopyData(0, PassConstBufferData);
+	PassConstBufferRes->CopyData(0, PassConstBufferData);	
 
 
 	for (auto& RenderItem : RenderItems)
@@ -235,7 +289,9 @@ void ShapesApp::UpdateConstBuffers()
 		{
 			RenderItem->MaterialRef->DiffuseAlbedo,
 			RenderItem->MaterialRef->FresnelR0,
-			RenderItem->MaterialRef->Roughness
+			RenderItem->MaterialRef->Roughness,
+			RenderItem->MaterialRef->DiffuseSrvHeapIndex,
+			RenderItem->MaterialRef->NormalSrvHeapIndex
 		};
 		MatConstBufferRes->CopyData(ObjConstBufferIndex, MatConstBufferData);
 		ObjConstBufferIndex++;
@@ -291,9 +347,11 @@ void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vec
 	auto PassBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
 	CommandList->SetGraphicsRootConstantBufferView(0, PassBufferGpuAddress);
 
+	auto DescHeapGpuAddress = DescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	CommandList->SetGraphicsRootDescriptorTable(2, DescHeapGpuAddress);  // TexTable
+
 	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get() ;
 	auto MatConstBufferRes = GetCurrentFrameResource()->MatConstBufferRes.get() ;
-	auto DescHeapGpuAddress = DescriptorHeap->GetGPUDescriptorHandleForHeapStart();
 
 	for (auto& RItem : RenderItem)
 	{
@@ -306,10 +364,6 @@ void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vec
 		auto ObjConstBufferSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjConstBuffer));
 		auto ObjBufferGpuAddress = ObjConstBufferRes->GetResourceGpuAddress() + ObjConstBufferSize * RItem->ObjConstBufferIndex;
 		CommandList->SetGraphicsRootConstantBufferView(1, ObjBufferGpuAddress);
-
-		auto DescriptorTableGpuAddress = CD3DX12_GPU_DESCRIPTOR_HANDLE( DescHeapGpuAddress );
-		DescriptorTableGpuAddress.Offset(RItem->MaterialRef->DiffuseSrvHeapIndex, CbvSrvUavDescriptorSize);
-		CommandList->SetGraphicsRootDescriptorTable(2, DescriptorTableGpuAddress);
 
 		auto MatConstBufferSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstBuffer));
 		auto MatBufferGpuAddress = MatConstBufferRes->GetResourceGpuAddress() + MatConstBufferSize * RItem->ObjConstBufferIndex;
@@ -333,13 +387,13 @@ void ShapesApp::BuildRootSignature()
 	RootParameter[1].InitAsConstantBufferView(1,0);
 
 	CD3DX12_DESCRIPTOR_RANGE TextureDescTable;
-	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
-	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable);
+	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MAX_TEXTURES, 0, 0);
+	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
+	RootParameter[3].InitAsConstantBufferView(2,0, D3D12_SHADER_VISIBILITY_PIXEL);	//Material
 
-	RootParameter[3].InitAsConstantBufferView(2,0);	//Material
 
 	auto Samplers = d3dUtil::GetStaticSamplers();
-	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(TotalRootParameters, RootParameter, Samplers.size() , Samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(TotalRootParameters, RootParameter, static_cast<UINT>(Samplers.size()), Samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 	Microsoft::WRL::ComPtr<ID3DBlob> SignatureBlob;
 	Microsoft::WRL::ComPtr<ID3DBlob> ErrorBlob;
 	ThrowIfFailed( D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1 
@@ -355,15 +409,16 @@ void ShapesApp::BuildShadersAndInputLayout()
 			0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
 
 	InputLayouts.push_back(
-		{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT,
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,
 			0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
 
 	InputLayouts.push_back(
-		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,
-			0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
-	InputLayouts.push_back(
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT,
-			0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+			0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+
+	InputLayouts.push_back(
+		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT,
+			0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
 
 	Shaders["Vertex"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["Pixel"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "PS", "ps_5_1");
@@ -371,48 +426,63 @@ void ShapesApp::BuildShadersAndInputLayout()
 
 void ShapesApp::BuildGeometryResource()
 {
+	ModelImporter::ModelData smgModelData;
+	bool smgLoaded = ModelImporter::LoadModel(
+		"Assets\\Models\\SMG\\M24_R_Low_Poly_Version_fbx.fbx",
+		smgModelData,	true,   false,  false  );
+
+	if (smgLoaded)
+	{
+		auto smgMeshGeo = ModelImporter::CreateMeshGeometry(smgModelData, DxDevice3D.Get(), CommandList.Get(), "SMG");
+		MeshGeometries[smgMeshGeo->Name] = std::move(smgMeshGeo);
+	}
+	else
+	{
+		std::cerr << "Failed to load SMG model!" << std::endl;
+	}
+
 	// Cube geometry with regular UVs (no tiling)
 	auto CubeMeshGeo = std::make_unique<MeshGeometry>();
 	CubeMeshGeo->Name = "Cube";
 	const std::vector<float> CubeVertices =
 	{
-		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)  Normal (x,y,z)
+		// Position (x,y,z)   TexCoord (u,v)  Normal (x,y,z)  Tangent (x,y,z)
 
-		// Front face (+Z)
-		-0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 1.0f,  0.0f, 0.0f, 1.0f,  // 0
-		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  // 1
-		 0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f, 1.0f,  1.0f, 0.0f,  0.0f, 0.0f, 1.0f,  // 2
-		-0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 0.0f,  0.0f, 0.0f, 1.0f,  // 3
+		// Front face (+Z) - tangent points right (+X)
+		-0.5f, -0.5f,  0.5f,  0.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 0
+		 0.5f, -0.5f,  0.5f,  1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 1
+		 0.5f,  0.5f,  0.5f,  1.0f, 0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 2
+		-0.5f,  0.5f,  0.5f,  0.0f, 0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 3
 
-		// Back face (-Z)
-		 0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f, 1.0f,  0.0f, 1.0f,  0.0f, 0.0f, -1.0f, // 4
-		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 1.0f, 1.0f,  1.0f, 1.0f,  0.0f, 0.0f, -1.0f, // 5
-		-0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f, 1.0f,  1.0f, 0.0f,  0.0f, 0.0f, -1.0f, // 6
-		 0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, 1.0f,  0.0f, 0.0f,  0.0f, 0.0f, -1.0f, // 7
+		// Back face (-Z) - tangent points left (-X)
+		 0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  0.0f, 0.0f, -1.0f,  -1.0f, 0.0f, 0.0f, // 4
+		-0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  0.0f, 0.0f, -1.0f,  -1.0f, 0.0f, 0.0f, // 5
+		-0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  0.0f, 0.0f, -1.0f,  -1.0f, 0.0f, 0.0f, // 6
+		 0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  -1.0f, 0.0f, 0.0f, // 7
 
-		// Top face (+Y)
-		-0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f,  0.0f, 1.0f, 0.0f,  // 8
-		 0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f,  0.0f, 1.0f, 0.0f,  // 9
-		 0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, 1.0f,  1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  // 10
-		-0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  // 11
+		// Top face (+Y) - tangent points right (+X)
+		-0.5f,  0.5f,  0.5f,  0.0f, 1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 8
+		 0.5f,  0.5f,  0.5f,  1.0f, 1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 9
+		 0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 10
+		-0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 11
 
-		// Bottom face (-Y)
-		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f,  0.0f, -1.0f, 0.0f, // 12
-		 0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f,  0.0f, -1.0f, 0.0f, // 13
-		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f,  0.0f, -1.0f, 0.0f, // 14
-		-0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 0.0f,  0.0f, -1.0f, 0.0f, // 15
+		// Bottom face (-Y) - tangent points right (+X)
+		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 12
+		 0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 13
+		 0.5f, -0.5f,  0.5f,  1.0f, 0.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 14
+		-0.5f, -0.5f,  0.5f,  0.0f, 0.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 15
 
-		// Right face (+X)
-		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f, 0.0f, 1.0f,  0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 16
-		 0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // 17
-		 0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, 1.0f,  1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 18
-		 0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 19
+		// Right face (+X) - tangent points back (-Z)
+		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 16
+		 0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 17
+		 0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 18
+		 0.5f,  0.5f,  0.5f,  0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 19
 
-		// Left face (-X)
-		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f, 1.0f, 1.0f,  0.0f, 1.0f,  -1.0f, 0.0f, 0.0f, // 20
-		-0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f,  -1.0f, 0.0f, 0.0f, // 21
-		-0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 0.0f,  -1.0f, 0.0f, 0.0f, // 22
-		-0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f, 1.0f,  0.0f, 0.0f,  -1.0f, 0.0f, 0.0f  // 23
+		// Left face (-X) - tangent points forward (+Z)
+		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 20
+		-0.5f, -0.5f,  0.5f,  1.0f, 1.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 21
+		-0.5f,  0.5f,  0.5f,  1.0f, 0.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 22
+		-0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f  // 23
 	};
 	const std::vector<uint16_t> CubeIndices =
 	{
@@ -436,7 +506,7 @@ void ShapesApp::BuildGeometryResource()
 		20, 22, 23
 	};
 
-	CubeMeshGeo->VertexByteStride	   = 12 * sizeof(float);
+	CubeMeshGeo->VertexByteStride	   = 11 * sizeof(float);
 	CubeMeshGeo->VertexBufferByteSize = static_cast<UINT>(CubeVertices.size() * sizeof(float));
 	CubeMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
 									(void*)CubeVertices.data(), CubeMeshGeo->VertexBufferByteSize, CubeMeshGeo->VertexBufferUploader);
@@ -458,11 +528,11 @@ void ShapesApp::BuildGeometryResource()
 	SurfaceMeshGeo->Name = "Surface";
 	const std::vector<float> SurfaceVertices =
 	{
-		// Position (x,y,z)   Color (r,g,b,a)        TexCoord (u,v)  Normal (x,y,z)
-		-0.5f, -0.5f, 0.0f,  1.0f, 0.0f, 0.0f, 1.0f,  0.0f, 10.0f,  0.0f, 0.0f, 1.0f,  // bottom-left
-		 0.5f, -0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 1.0f,  10.0f, 10.0f,  0.0f, 0.0f, 1.0f,  // bottom-right
-		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f, 1.0f, 1.0f,  0.0f, 0.0f,  0.0f, 0.0f, 1.0f,  // top-left
-		 0.5f,  0.5f, 0.0f,  1.0f, 1.0f, 1.0f, 1.0f,  10.0f, 0.0f,  0.0f, 0.0f, 1.0f   // top-right
+		// Position (x,y,z)   TexCoord (u,v)  Normal (x,y,z)  Tangent (x,y,z)
+		-0.5f, -0.5f, 0.0f,  0.0f, 10.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // bottom-left
+		 0.5f, -0.5f, 0.0f,  10.0f, 10.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // bottom-right
+		-0.5f,  0.5f, 0.0f,  0.0f, 0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  // top-left
+		 0.5f,  0.5f, 0.0f,  10.0f, 0.0f,  0.0f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f   // top-right
 	};
 	const std::vector<uint16_t> SurfaceIndices =
 	{
@@ -470,7 +540,7 @@ void ShapesApp::BuildGeometryResource()
 		1, 2, 3
 	};
 
-	SurfaceMeshGeo->VertexByteStride	   = 12 * sizeof(float);
+	SurfaceMeshGeo->VertexByteStride	   = 11 * sizeof(float);
 	SurfaceMeshGeo->VertexBufferByteSize = static_cast<UINT>(SurfaceVertices.size() * sizeof(float));
 	SurfaceMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
 									(void*)SurfaceVertices.data(), SurfaceMeshGeo->VertexBufferByteSize, SurfaceMeshGeo->VertexBufferUploader);
@@ -490,11 +560,47 @@ void ShapesApp::BuildGeometryResource()
 
 void ShapesApp::BuildRenderItems()
 {
+	UINT objIndex = 0;
+
+	// Render the SMG model if it was loaded successfully
+	if (MeshGeometries.find("SMG") != MeshGeometries.end())
+	{
+		auto smgMeshGeo = MeshGeometries["SMG"].get();
+
+		// Iterate through all submeshes in the SMG model
+		for (const auto& [submeshName, submesh] : smgMeshGeo->DrawArgs)
+		{
+			std::unique_ptr<RenderItem> smgRenderItem = std::make_unique<RenderItem>();
+
+			// Position and scale the SMG (adjust as needed for your scene)
+			DirectX::XMStoreFloat4x4(&smgRenderItem->World,
+				DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *  
+				DirectX::XMMatrixRotationY(DirectX::XM_PI/2) *  
+				DirectX::XMMatrixRotationZ(DirectX::XM_PI/2) *
+				DirectX::XMMatrixTranslation(0.0f, 0.0f, 0.0f)
+			);
+
+			smgRenderItem->ObjConstBufferIndex = objIndex++;
+			smgRenderItem->MeshGeometryRef = smgMeshGeo;
+			auto SmgMaterial = GetMaterialForTexture("Tex_M24R_C");
+			SmgMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_M24R_N");
+			smgRenderItem->MaterialRef = SmgMaterial;
+			smgRenderItem->IndexCount = submesh.IndexCount;
+			smgRenderItem->IndexStartLocation = submesh.StartIndexLocation;
+			smgRenderItem->VertexStartLocation = submesh.BaseVertexLocation;
+
+			RenderItems.push_back(std::move(smgRenderItem));
+		}
+	}
+
 	std::unique_ptr<RenderItem> CubeMesh = std::make_unique<RenderItem>();
-	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixIdentity());
-	CubeMesh->ObjConstBufferIndex = 0;
+	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, 0.0f, 0.0f));  // Move cube to the right
+	CubeMesh->ObjConstBufferIndex = objIndex++;
 	CubeMesh->MeshGeometryRef = MeshGeometries["Cube"].get();
-	CubeMesh->MaterialRef = GetMaterialForTexture("Texice");
+
+	auto CubeMeshMaterial = GetMaterialForTexture("Tex_bricks2");
+	CubeMeshMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_bricks2_nmap");
+	CubeMesh->MaterialRef = CubeMeshMaterial;
 	CubeMesh->IndexCount = CubeMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	CubeMesh->IndexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	CubeMesh->VertexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
@@ -503,9 +609,12 @@ void ShapesApp::BuildRenderItems()
 	std::unique_ptr<RenderItem> SurfaceMesh = std::make_unique<RenderItem>();
 	DirectX::XMStoreFloat4x4(&SurfaceMesh->World, DirectX::XMMatrixScaling(10,10,1)
 		*DirectX::XMMatrixRotationX(DirectX::XM_PIDIV2)*DirectX::XMMatrixTranslation(0.0f,-2.0f,0.0f));
-	SurfaceMesh->ObjConstBufferIndex = 1;
+	SurfaceMesh->ObjConstBufferIndex = objIndex++;
+
 	SurfaceMesh->MeshGeometryRef = MeshGeometries["Surface"].get();
-	SurfaceMesh->MaterialRef = GetMaterialForTexture("Texcheckboard");
+	auto SurfaceMaterial = GetMaterialForTexture("Tex_tile");
+	SurfaceMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_tile_nmap");
+	SurfaceMesh->MaterialRef = SurfaceMaterial;
 	SurfaceMesh->IndexCount = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	SurfaceMesh->IndexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	SurfaceMesh->VertexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
@@ -522,17 +631,12 @@ void ShapesApp::BuildFrameResources()
 
 void ShapesApp::BuildDescriptorHeap()
 {
-	std::string TextureDirectory = "Assets\\Textures\\Diffuse";
-	assert(std::filesystem::exists(TextureDirectory));
-	UINT TexturesCount{0};  // @TODO Handle for Normal Textures
-	for (auto Entry : std::filesystem::directory_iterator(TextureDirectory))
-		if (Entry.is_regular_file() && Entry.path().extension() == ".dds")
-			TexturesCount++;
-
+	// Allocate descriptor heap with max size to match root signature
+	// Unused slots cost minimal memory (~8-32 bytes per descriptor)
 	D3D12_DESCRIPTOR_HEAP_DESC HeapDesc;
 	HeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	HeapDesc.NodeMask = 0;
-	HeapDesc.NumDescriptors = TexturesCount;
+	HeapDesc.NumDescriptors = MAX_TEXTURES;
 	HeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
 	ThrowIfFailed( DxDevice3D->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&DescriptorHeap)) );

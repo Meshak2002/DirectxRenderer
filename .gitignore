@@ -124,4 +124,10 @@ $RECYCLE.BIN/
 *.bak
 *.backup
 *~
+
+# Package managers and dependencies
+packages/
+vcpkg_installed/
+*.nupkg
+
 CLAUDE.md
