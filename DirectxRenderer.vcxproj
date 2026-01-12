@@ -161,10 +161,11 @@
   <ItemGroup>
     <ClCompile Include="src\Base\GameTime.cpp" />
     <ClCompile Include="src\Base\DxRenderBase.cpp" />
+    <ClCompile Include="src\Base\Camera.cpp" />
     <ClCompile Include="src\ShapesApp.cpp" />
-    <ClCompile Include="src\Utility\Camera.cpp" />
     <ClCompile Include="src\Utility\d3dUtil.cpp" />
     <ClCompile Include="src\Utility\DDSTextureLoader.cpp" />
+    <ClCompile Include="src\Utility\GeometryGenerator.cpp" />
     <ClCompile Include="src\Utility\MathHelper.cpp" />
     <ClCompile Include="src\Utility\ModelImporter.cpp" />
     <ClCompile Include="src\Utility\TextureConverter.cpp" />
@@ -175,22 +176,27 @@
   <ItemGroup>
     <ClInclude Include="src\Base\GameTime.h" />
     <ClInclude Include="src\Base\DxRenderBase.h" />
+    <ClInclude Include="src\Base\Camera.h" />
+    <ClInclude Include="src\Base\FrameResource.h" />
+    <ClInclude Include="src\Base\UploadBuffer.h" />
     <ClInclude Include="src\ShapesApp.h" />
-    <ClInclude Include="src\Utility\Camera.h" />
     <ClInclude Include="src\Utility\d3dUtil.h" />
     <ClInclude Include="src\Utility\d3dx12.h" />
     <ClInclude Include="src\Utility\DDSTextureLoader.h" />
-    <ClInclude Include="src\Utility\Objects\FrameResource.h" />
+    <ClInclude Include="src\Utility\GeometryGenerator.h" />
     <ClInclude Include="src\Utility\MathHelper.h" />
     <ClInclude Include="src\Utility\ModelImporter.h" />
     <ClInclude Include="src\Utility\TextureConverter.h" />
-    <ClInclude Include="src\Utility\Objects\UploadBuffer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
     <None Include="src\Shaders\ShapesApp.hlsl" />
   </ItemGroup>
   <ItemGroup>
+    <Image Include="Assets\Textures\CubeMap\desertcube1024.dds" />
+    <Image Include="Assets\Textures\CubeMap\grasscube1024.dds" />
+    <Image Include="Assets\Textures\CubeMap\snowcube1024.dds" />
+    <Image Include="Assets\Textures\CubeMap\sunsetcube1024.dds" />
     <Image Include="Assets\Textures\Diffuse\bricks.dds" />
     <Image Include="Assets\Textures\Diffuse\bricks2.dds" />
     <Image Include="Assets\Textures\Diffuse\bricks3.dds" />
@@ -210,6 +216,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\LightingUtil.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\Skybox.hlsl">
+      <FileType>Document</FileType>
+    </None>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

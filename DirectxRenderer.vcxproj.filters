@@ -25,10 +25,16 @@
     <ClCompile Include="src\Base\GameTime.cpp">
       <Filter>Source Files\Base</Filter>
     </ClCompile>
+    <ClCompile Include="src\Base\Camera.cpp">
+      <Filter>Source Files\Base</Filter>
+    </ClCompile>
     <ClCompile Include="src\Utility\d3dUtil.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="src\Utility\DDSTextureLoader.cpp">
+      <Filter>Source Files\Utility</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Utility\GeometryGenerator.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
     <ClCompile Include="src\Utility\MathHelper.cpp">
@@ -36,9 +42,6 @@
     </ClCompile>
     <ClCompile Include="src\SimpleScreenApp.h" />
     <ClCompile Include="src\ShapesApp.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Utility\Camera.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Utility\ModelImporter.cpp">
@@ -55,6 +58,15 @@
     <ClInclude Include="src\Base\GameTime.h">
       <Filter>Source Files\Base</Filter>
     </ClInclude>
+    <ClInclude Include="src\Base\Camera.h">
+      <Filter>Source Files\Base</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Base\FrameResource.h">
+      <Filter>Source Files\Base</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Base\UploadBuffer.h">
+      <Filter>Source Files\Base</Filter>
+    </ClInclude>
     <ClInclude Include="src\Utility\d3dUtil.h">
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
@@ -62,6 +74,9 @@
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="src\Utility\DDSTextureLoader.h">
+      <Filter>Source Files\Utility</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Utility\GeometryGenerator.h">
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="src\Utility\MathHelper.h">
@@ -74,9 +89,6 @@
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="src\ShapesApp.h" />
-    <ClInclude Include="src\Utility\Objects\UploadBuffer.h" />
-    <ClInclude Include="src\Utility\Objects\FrameResource.h" />
-    <ClInclude Include="src\Utility\Camera.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\ShapesApp.hlsl" />
@@ -100,5 +112,9 @@
     <Image Include="Assets\Textures\Normals\default_nmap.dds" />
     <Image Include="Assets\Textures\Normals\head_norm.dds" />
     <Image Include="Assets\Textures\Normals\tile_nmap.dds" />
+    <Image Include="Assets\Textures\CubeMap\desertcube1024.dds" />
+    <Image Include="Assets\Textures\CubeMap\grasscube1024.dds" />
+    <Image Include="Assets\Textures\CubeMap\snowcube1024.dds" />
+    <Image Include="Assets\Textures\CubeMap\sunsetcube1024.dds" />
   </ItemGroup>
 </Project>

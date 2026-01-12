@@ -1,16 +1,22 @@
 #pragma once
 #include "Base/DxRenderBase.h"
 #include <DirectXMath.h>
-#include "Utility/Objects/UploadBuffer.h"
-#include "Utility/Objects/FrameResource.h"
+#include "Base/UploadBuffer.h"
+#include "Base/FrameResource.h"
 #include <optional>
 #include <climits>
 
-#include "Utility/Camera.h"
+#include "Base/Camera.h"
 
 // Maximum number of textures that can be bound at once
-// This must match the shader array size: Texture2D DiffuseTexture[MAX_TEXTURES]
 static constexpr UINT MAX_TEXTURES = 512;
+
+enum class RenderLayer
+{
+	Opaque = 0,
+	Skybox = 1,
+	Count = 2
+};
 
 class ShapesApp : public DxRenderBase
 {
@@ -46,7 +52,7 @@ private:
 	void BuildPSO();
 	//OnDraw
 	void UpdateConstBuffers();
-	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<std::unique_ptr<RenderItem>>& RenderItem);
+	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<RenderItem*>& RenderItem);
 
 	void InitCamera();
 	void BuildTextures();
@@ -57,7 +63,7 @@ private:
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayouts;
-	Microsoft::WRL::ComPtr<ID3D12PipelineState> PSO;
+	std::unordered_map<std::string,Microsoft::WRL::ComPtr<ID3D12PipelineState>> PSO;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DescriptorHeap;
 
 
@@ -68,9 +74,11 @@ private:
 
 	std::vector<std::unique_ptr<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>> FrameResources;
 	std::vector<std::unique_ptr<RenderItem>> RenderItems;
+	std::vector<RenderItem*> RenderLayerItems[(int)RenderLayer::Count];
 
 
 	UINT TotalFrameResources = 3;
+	UINT SkyBoxHeapIndex;
 	UINT CurrentFrameResourceIndex{UINT_MAX};
 	POINT MouseLastPos;
 	std::unique_ptr<Camera> ViewCamera;

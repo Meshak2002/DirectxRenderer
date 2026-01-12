@@ -130,6 +130,7 @@ namespace TextureConverter
     // - "*_roughness.png" → BC4 (single channel)
     //
     bool IsGivenFileaNormalMap(const std::string& filename);
+    bool IsGivenFileaCubeMap(const std::string& filename);
 
     CompressionFormat GetRecommendedFormat(const std::string& filename);
 

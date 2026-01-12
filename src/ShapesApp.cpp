@@ -4,6 +4,7 @@
 #include "Utility/ModelImporter.h"
 #include "Utility/TextureConverter.h"
 #include <filesystem>
+#include "Utility/GeometryGenerator.h"
 
 const int gNumFrameResources = 3;
 
@@ -131,6 +132,8 @@ bool ShapesApp::Initialize()
 	ID3D12CommandList* Commands[] = {CommandList.Get()};
 	CommandQueue->ExecuteCommandLists(_countof(Commands), Commands) ;
 
+	SkyBoxHeapIndex = Textures["Tex_sunsetcube1024"]->HeapIndex;
+
 	FlushCommandQueue();
 	return true;
 }
@@ -166,17 +169,24 @@ void ShapesApp::BuildTextures()
 		NewTexture->Name =  "Tex_" + OriginalFileName;
 		NewTexture->Filename = Entry.path().wstring();
 		NewTexture->HeapIndex = TexturesCount;
-
 		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(DxDevice3D.Get(), CommandList.Get(),
 			NewTexture->Filename.c_str(), NewTexture->Resource, NewTexture->UploadHeap));
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 		srvDesc.Format = NewTexture->Resource.Get()->GetDesc().Format;
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MostDetailedMip = 0;
 		srvDesc.Texture2D.MipLevels = NewTexture->Resource.Get()->GetDesc().MipLevels;
 		srvDesc.Texture2D.ResourceMinLODClamp = 0;
+
+		if (TextureConverter::IsGivenFileaCubeMap(OriginalFileName))
+		{
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+			srvDesc.TextureCube.MostDetailedMip = 0;
+			srvDesc.TextureCube.MipLevels = NewTexture->Resource.Get()->GetDesc().MipLevels;
+			srvDesc.TextureCube.ResourceMinLODClamp = 0;
+		}
 		DxDevice3D->CreateShaderResourceView(NewTexture->Resource.Get(), &srvDesc, DescHeapCpuHandle);
 		DescHeapCpuHandle.Offset(1, CbvSrvUavDescriptorSize);
 		Textures[NewTexture->Name] = move(NewTexture);
@@ -285,13 +295,14 @@ void ShapesApp::UpdateConstBuffers()
 		DirectX::XMStoreFloat4x4(&ObjConstBufferData.World, DirectX::XMMatrixTranspose(XWorld));
 		ObjConstBufferRes->CopyData(ObjConstBufferIndex, ObjConstBufferData);
 
+		assert(RenderItem->MaterialRef->DiffuseSrvHeapIndex >= 0 && RenderItem->MaterialRef->NormalSrvHeapIndex >= 0);
 		MaterialConstBuffer MatConstBufferData
 		{
 			RenderItem->MaterialRef->DiffuseAlbedo,
 			RenderItem->MaterialRef->FresnelR0,
 			RenderItem->MaterialRef->Roughness,
-			RenderItem->MaterialRef->DiffuseSrvHeapIndex,
-			RenderItem->MaterialRef->NormalSrvHeapIndex
+			(UINT)RenderItem->MaterialRef->DiffuseSrvHeapIndex,
+			(UINT)RenderItem->MaterialRef->NormalSrvHeapIndex
 		};
 		MatConstBufferRes->CopyData(ObjConstBufferIndex, MatConstBufferData);
 		ObjConstBufferIndex++;
@@ -303,7 +314,7 @@ void ShapesApp::Draw(const GameTime& Gt)
 	auto CurrentFrameResource = GetCurrentFrameResource();
 
 	ThrowIfFailed(CurrentFrameResource->CommandAlloc->Reset());
-	ThrowIfFailed(CommandList->Reset(CurrentFrameResource->CommandAlloc.Get(), PSO.Get()));
+	ThrowIfFailed(CommandList->Reset(CurrentFrameResource->CommandAlloc.Get(), PSO["Opaque"].Get()));
 
 	auto Barier = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBufferResource(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 	CommandList->ResourceBarrier(1, &Barier);
@@ -324,7 +335,16 @@ void ShapesApp::Draw(const GameTime& Gt)
 
 	CommandList->SetGraphicsRootSignature(RootSignature.Get());
 
-	DrawRenderItems(CommandList.Get(), RenderItems);
+	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Opaque]);
+
+	CommandList->SetPipelineState(PSO["Sky"].Get());
+
+	auto DescHeapGpuAddress = CD3DX12_GPU_DESCRIPTOR_HANDLE(DescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	DescHeapGpuAddress.Offset(SkyBoxHeapIndex, CbvSrvUavDescriptorSize);
+	CommandList->SetGraphicsRootDescriptorTable(4, DescHeapGpuAddress);
+
+	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Skybox]);
+
 
 	auto Barier2 = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBufferResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 	CommandList->ResourceBarrier(1, &Barier2);
@@ -341,7 +361,7 @@ void ShapesApp::Draw(const GameTime& Gt)
 
 }
 
-void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<std::unique_ptr<RenderItem>>& RenderItem)
+void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<RenderItem*>& RenderItem)
 {
 	auto PassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get() ;
 	auto PassBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
@@ -381,7 +401,7 @@ FrameResource<ShapesApp::PassConstBuffer,ShapesApp::ObjConstBuffer,ShapesApp::Ma
 
 void ShapesApp::BuildRootSignature()
 {
-	const size_t TotalRootParameters = 4;
+	const size_t TotalRootParameters = 5;
 	CD3DX12_ROOT_PARAMETER RootParameter[TotalRootParameters];
 	RootParameter[0].InitAsConstantBufferView(0,0);
 	RootParameter[1].InitAsConstantBufferView(1,0);
@@ -391,13 +411,23 @@ void ShapesApp::BuildRootSignature()
 	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
 	RootParameter[3].InitAsConstantBufferView(2,0, D3D12_SHADER_VISIBILITY_PIXEL);	//Material
 
+	CD3DX12_DESCRIPTOR_RANGE SkyTexDescTable;
+	SkyTexDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 1);
+	RootParameter[4].InitAsDescriptorTable(1,&SkyTexDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
+
 
 	auto Samplers = d3dUtil::GetStaticSamplers();
 	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(TotalRootParameters, RootParameter, static_cast<UINT>(Samplers.size()), Samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 	Microsoft::WRL::ComPtr<ID3DBlob> SignatureBlob;
 	Microsoft::WRL::ComPtr<ID3DBlob> ErrorBlob;
-	ThrowIfFailed( D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1 
+	HRESULT HR = ( D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1 
 		, SignatureBlob.GetAddressOf(), ErrorBlob.GetAddressOf()));
+	if (ErrorBlob != nullptr)
+	{
+		::OutputDebugStringA((char*)ErrorBlob->GetBufferPointer());
+	}
+	ThrowIfFailed(HR);
+
 	ThrowIfFailed( DxDevice3D->CreateRootSignature(0, SignatureBlob->GetBufferPointer(),
 		SignatureBlob->GetBufferSize(), IID_PPV_ARGS(RootSignature.GetAddressOf() )));
 }
@@ -422,6 +452,9 @@ void ShapesApp::BuildShadersAndInputLayout()
 
 	Shaders["Vertex"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["Pixel"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "PS", "ps_5_1");
+
+	Shaders["SkyVertex"] = d3dUtil::CompileShader(L"src\\Shaders\\Skybox.hlsl", nullptr, "VS", "vs_5_1");
+	Shaders["SkyPixel"] = d3dUtil::CompileShader(L"src\\Shaders\\Skybox.hlsl", nullptr, "PS", "ps_5_1");
 }
 
 void ShapesApp::BuildGeometryResource()
@@ -440,6 +473,28 @@ void ShapesApp::BuildGeometryResource()
 	{
 		std::cerr << "Failed to load SMG model!" << std::endl;
 	}
+
+	GeometryGenerator GeoGen;
+	GeometryGenerator::MeshData SphereGeo = GeoGen.CreateSphere(1.0f, 24, 24);
+	auto SkyboxSphere = std::make_unique<MeshGeometry>();
+	SkyboxSphere->Name = "Skybox";
+	SkyboxSphere->VertexByteStride = sizeof(GeometryGenerator::Vertex);
+	SkyboxSphere->VertexBufferByteSize = static_cast<UINT>(SphereGeo.Vertices.size() * sizeof(GeometryGenerator::Vertex));
+	SkyboxSphere->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+		SphereGeo.Vertices.data(), SkyboxSphere->VertexBufferByteSize, SkyboxSphere->VertexBufferUploader);
+
+	SkyboxSphere->IndexFormat = DXGI_FORMAT_R16_UINT;
+	SkyboxSphere->IndexBufferByteSize = static_cast<UINT>(SphereGeo.GetIndices16().size() * sizeof(uint16_t));
+	SkyboxSphere->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+		SphereGeo.GetIndices16().data(), SkyboxSphere->IndexBufferByteSize, SkyboxSphere->IndexBufferUploader);
+
+	SubmeshGeometry SphereDrawArg;
+	SphereDrawArg.BaseVertexLocation = 0;
+	SphereDrawArg.StartIndexLocation = 0;
+	SphereDrawArg.IndexCount = static_cast<UINT>(SphereGeo.GetIndices16().size());
+	SkyboxSphere->DrawArgs["Base"] = SphereDrawArg;
+	MeshGeometries[SkyboxSphere->Name] = move(SkyboxSphere);
+
 
 	// Cube geometry with regular UVs (no tiling)
 	auto CubeMeshGeo = std::make_unique<MeshGeometry>();
@@ -520,7 +575,6 @@ void ShapesApp::BuildGeometryResource()
 	CubeMeshPartition.BaseVertexLocation = 0;
 	CubeMeshPartition.IndexCount = static_cast<UINT>(CubeIndices.size());
 	CubeMeshGeo->DrawArgs["Base"] = CubeMeshPartition;
-
 	MeshGeometries[CubeMeshGeo->Name] = move(CubeMeshGeo);
 
 	// Surface geometry with tiled UVs
@@ -562,24 +616,18 @@ void ShapesApp::BuildRenderItems()
 {
 	UINT objIndex = 0;
 
-	// Render the SMG model if it was loaded successfully
 	if (MeshGeometries.find("SMG") != MeshGeometries.end())
 	{
 		auto smgMeshGeo = MeshGeometries["SMG"].get();
-
-		// Iterate through all submeshes in the SMG model
 		for (const auto& [submeshName, submesh] : smgMeshGeo->DrawArgs)
 		{
 			std::unique_ptr<RenderItem> smgRenderItem = std::make_unique<RenderItem>();
-
-			// Position and scale the SMG (adjust as needed for your scene)
 			DirectX::XMStoreFloat4x4(&smgRenderItem->World,
 				DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *  
 				DirectX::XMMatrixRotationY(DirectX::XM_PI/2) *  
 				DirectX::XMMatrixRotationZ(DirectX::XM_PI/2) *
 				DirectX::XMMatrixTranslation(0.0f, 0.0f, 0.0f)
 			);
-
 			smgRenderItem->ObjConstBufferIndex = objIndex++;
 			smgRenderItem->MeshGeometryRef = smgMeshGeo;
 			auto SmgMaterial = GetMaterialForTexture("Tex_M24R_C");
@@ -588,7 +636,7 @@ void ShapesApp::BuildRenderItems()
 			smgRenderItem->IndexCount = submesh.IndexCount;
 			smgRenderItem->IndexStartLocation = submesh.StartIndexLocation;
 			smgRenderItem->VertexStartLocation = submesh.BaseVertexLocation;
-
+			RenderLayerItems[(UINT)RenderLayer::Opaque].push_back(smgRenderItem.get());
 			RenderItems.push_back(std::move(smgRenderItem));
 		}
 	}
@@ -597,20 +645,19 @@ void ShapesApp::BuildRenderItems()
 	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, 0.0f, 0.0f));  // Move cube to the right
 	CubeMesh->ObjConstBufferIndex = objIndex++;
 	CubeMesh->MeshGeometryRef = MeshGeometries["Cube"].get();
-
 	auto CubeMeshMaterial = GetMaterialForTexture("Tex_bricks2");
 	CubeMeshMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_bricks2_nmap");
 	CubeMesh->MaterialRef = CubeMeshMaterial;
 	CubeMesh->IndexCount = CubeMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	CubeMesh->IndexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	CubeMesh->VertexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
+	RenderLayerItems[(UINT)RenderLayer::Opaque].push_back(CubeMesh.get());
 	RenderItems.push_back( move(CubeMesh) );
 	
 	std::unique_ptr<RenderItem> SurfaceMesh = std::make_unique<RenderItem>();
 	DirectX::XMStoreFloat4x4(&SurfaceMesh->World, DirectX::XMMatrixScaling(10,10,1)
 		*DirectX::XMMatrixRotationX(DirectX::XM_PIDIV2)*DirectX::XMMatrixTranslation(0.0f,-2.0f,0.0f));
 	SurfaceMesh->ObjConstBufferIndex = objIndex++;
-
 	SurfaceMesh->MeshGeometryRef = MeshGeometries["Surface"].get();
 	auto SurfaceMaterial = GetMaterialForTexture("Tex_tile");
 	SurfaceMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_tile_nmap");
@@ -618,7 +665,21 @@ void ShapesApp::BuildRenderItems()
 	SurfaceMesh->IndexCount = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	SurfaceMesh->IndexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	SurfaceMesh->VertexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
+	RenderLayerItems[(UINT)RenderLayer::Opaque].push_back(SurfaceMesh.get());
 	RenderItems.push_back( move(SurfaceMesh) );
+
+	std::unique_ptr<RenderItem> SkyBoxMesh = std::make_unique<RenderItem>();
+	DirectX::XMStoreFloat4x4(&SkyBoxMesh->World, DirectX::XMMatrixScaling(500, 500, 500));
+	SkyBoxMesh->ObjConstBufferIndex = objIndex++;
+	SkyBoxMesh->MeshGeometryRef = MeshGeometries["Skybox"].get();
+	auto SkyBoxMaterial = GetMaterialForTexture("Tex_sunsetcube1024");
+	SkyBoxMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_default_nmap");
+	SkyBoxMesh->MaterialRef = SkyBoxMaterial;
+	SkyBoxMesh->IndexCount = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
+	SkyBoxMesh->IndexStartLocation = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
+	SkyBoxMesh->VertexStartLocation = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
+	RenderLayerItems[(UINT)RenderLayer::Skybox].push_back(SkyBoxMesh.get());
+	RenderItems.push_back(move(SkyBoxMesh));
 }
 
 void ShapesApp::BuildFrameResources()
@@ -673,6 +734,22 @@ void ShapesApp::BuildPSO()
 	OpaquePsoDesc.SampleMask = UINT_MAX;
 	OpaquePsoDesc.SampleDesc.Count = 1;
 	OpaquePsoDesc.SampleDesc.Quality = 0;
-	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&OpaquePsoDesc, IID_PPV_ARGS(&PSO) ));
+	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&OpaquePsoDesc, IID_PPV_ARGS(&PSO["Opaque"])));
+
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC SkyPsoDesc = OpaquePsoDesc;
+	SkyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	SkyPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	SkyPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["SkyVertex"]->GetBufferPointer()),
+		Shaders["SkyVertex"]->GetBufferSize()
+	};
+	SkyPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["SkyPixel"]->GetBufferPointer()),
+		Shaders["SkyPixel"]->GetBufferSize()
+	};
+	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&SkyPsoDesc, IID_PPV_ARGS(&PSO["Sky"])));
 }
 

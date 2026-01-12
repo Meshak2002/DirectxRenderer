@@ -434,6 +434,17 @@ namespace TextureConverter
         }
         return false;
     }
+    bool IsGivenFileaCubeMap(const std::string& filename)
+    {
+        std::string lower = filename;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+        if (lower.find("cube") != std::string::npos)
+        {
+            return true;
+        }
+        return false;
+    }
 
     // ===== HELPER: Recommend format based on filename =====
     CompressionFormat GetRecommendedFormat(const std::string& filename)
