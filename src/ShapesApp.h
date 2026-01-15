@@ -5,7 +5,7 @@
 #include "Base/FrameResource.h"
 #include <optional>
 #include <climits>
-
+#include "Base/ShadowMap.h"
 #include "Base/Camera.h"
 
 // Maximum number of textures that can be bound at once
@@ -15,7 +15,8 @@ enum class RenderLayer
 {
 	Opaque = 0,
 	Skybox = 1,
-	Count = 2
+	ShadowDebug = 2,
+	Count = 3
 };
 
 class ShapesApp : public DxRenderBase
@@ -53,9 +54,11 @@ private:
 	//OnDraw
 	void UpdateConstBuffers();
 	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<RenderItem*>& RenderItem);
+	void DrawSceneToShadowMap();
 
 	void InitCamera();
 	void BuildTextures();
+	void BuildDescriptors();
 	void BuildMaterials();
 	Material* GetMaterialForTexture(std::string TexName);
 
@@ -64,7 +67,7 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayouts;
 	std::unordered_map<std::string,Microsoft::WRL::ComPtr<ID3D12PipelineState>> PSO;
-	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DescriptorHeap;
+	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> SrvDescriptorHeap;
 
 
 	std::unordered_map<std::string, Microsoft::WRL::ComPtr<ID3DBlob>> Shaders;
@@ -75,13 +78,19 @@ private:
 	std::vector<std::unique_ptr<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>> FrameResources;
 	std::vector<std::unique_ptr<RenderItem>> RenderItems;
 	std::vector<RenderItem*> RenderLayerItems[(int)RenderLayer::Count];
+	std::vector<Texture*> DiffTexture2DCaches;
+	std::string SkyBox = "Tex_sunsetcube1024";
 
 
 	UINT TotalFrameResources = 3;
-	UINT SkyBoxHeapIndex;
+	UINT ShadowMapHeapIndex;
 	UINT CurrentFrameResourceIndex{UINT_MAX};
 	POINT MouseLastPos;
 	std::unique_ptr<Camera> ViewCamera;
+	std::unique_ptr<ShadowMap> ShadowMapObj;
+	CD3DX12_GPU_DESCRIPTOR_HANDLE NullSrvGpuHandle;
+	CD3DX12_GPU_DESCRIPTOR_HANDLE ShadowMapSrvGpuHandle;
+	DirectX::BoundingSphere SceneSphereBound;
 
 protected:
 	FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>* GetCurrentFrameResource() const;
@@ -117,6 +126,7 @@ struct ShapesApp::PassConstBuffer
 	DirectX::XMFLOAT4X4 View;
 	DirectX::XMFLOAT4X4 Proj;
 	DirectX::XMFLOAT4X4 ViewProj;
+	DirectX::XMFLOAT4X4 ShadowTransform;
 	DirectX::XMFLOAT3	Eye;
 	float Padding;  // Align Lights array to 16-byte boundary for HLSL
 	Light Lights[16];

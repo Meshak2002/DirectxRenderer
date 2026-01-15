@@ -364,7 +364,7 @@ void DxRenderBase::CreateRtvDsvHeap()
 	RtvHeapDesc.NodeMask = 0;
 	ThrowIfFailed(DxDevice3D->CreateDescriptorHeap(&RtvHeapDesc, IID_PPV_ARGS(&RtvHeap)));
 	D3D12_DESCRIPTOR_HEAP_DESC DsvHeapDesc;
-	DsvHeapDesc.NumDescriptors = 1;
+	DsvHeapDesc.NumDescriptors = 2;  // Main depth buffer + shadow map
 	DsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	DsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	DsvHeapDesc.NodeMask = 0;
@@ -397,7 +397,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE DxRenderBase::CurrentBackBufferHeapDescHandle() cons
 	return Handle;
 }
 
-D3D12_CPU_DESCRIPTOR_HANDLE DxRenderBase::DepthStencilHeapDescHandle() const
+D3D12_CPU_DESCRIPTOR_HANDLE DxRenderBase::GetDsvHeapCpuHandle() const
 {
 	return DsvHeap->GetCPUDescriptorHandleForHeapStart();
 }

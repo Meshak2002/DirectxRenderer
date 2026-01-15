@@ -162,6 +162,7 @@
     <ClCompile Include="src\Base\GameTime.cpp" />
     <ClCompile Include="src\Base\DxRenderBase.cpp" />
     <ClCompile Include="src\Base\Camera.cpp" />
+    <ClCompile Include="src\Base\ShadowMap.cpp" />
     <ClCompile Include="src\ShapesApp.cpp" />
     <ClCompile Include="src\Utility\d3dUtil.cpp" />
     <ClCompile Include="src\Utility\DDSTextureLoader.cpp" />
@@ -178,6 +179,7 @@
     <ClInclude Include="src\Base\DxRenderBase.h" />
     <ClInclude Include="src\Base\Camera.h" />
     <ClInclude Include="src\Base\FrameResource.h" />
+    <ClInclude Include="src\Base\ShadowMap.h" />
     <ClInclude Include="src\Base\UploadBuffer.h" />
     <ClInclude Include="src\ShapesApp.h" />
     <ClInclude Include="src\Utility\d3dUtil.h" />
@@ -219,6 +221,19 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\Skybox.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\ShadowMap.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\CommonBuffer.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Shaders\ShadowMapDebug.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

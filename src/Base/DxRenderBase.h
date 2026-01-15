@@ -64,7 +64,7 @@ protected:
 	// Essential getters
 	float AspectRatio() const;
 	D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackBufferHeapDescHandle() const;
-	D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilHeapDescHandle() const;
+	D3D12_CPU_DESCRIPTOR_HANDLE GetDsvHeapCpuHandle() const;
 	ID3D12Resource* CurrentBackBufferResource() const;
 	ID3D12Resource* DepthStencilResource() const;
 	void FlushCommandQueue();

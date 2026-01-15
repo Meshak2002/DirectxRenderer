@@ -39,7 +39,7 @@ void ConvertToDDsTexturesOnStartup()
 	std::cout << "===== CONVERSION COMPLETE =====" << std::endl;
 }
 
-ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance)
+ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance) , SkyBox{"Tex_sunsetcube1024"}
 {
 	ViewCamera = std::make_unique<Camera>();
 }
@@ -112,16 +112,23 @@ bool ShapesApp::Initialize()
 	if (!DxRenderBase::Initialize())
 		return false;
 	ConvertToDDsTexturesOnStartup();
-
 	InitCamera();
-	ThrowIfFailed(CommandList->Reset(CommandAlloc.Get(), nullptr));
 
+	UINT DepthTextureWidth  = 2048;
+	UINT DepthTextureHeight = 2048;
+	ShadowMapObj = std::make_unique<ShadowMap>(DxDevice3D.Get(), DepthTextureWidth, DepthTextureHeight);
+
+	SceneSphereBound.Center =  DirectX::XMFLOAT3(0.0f, -1.5f, 0.0f);
+	SceneSphereBound.Radius = 10.0f;
+	
+	ThrowIfFailed(CommandList->Reset(CommandAlloc.Get(), nullptr));
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
 	BuildDescriptorHeap();
 
 	BuildGeometryResource();
 	BuildTextures();
+	BuildDescriptors();
 	BuildMaterials();
 	BuildRenderItems();
 
@@ -131,8 +138,6 @@ bool ShapesApp::Initialize()
 	CommandList->Close();
 	ID3D12CommandList* Commands[] = {CommandList.Get()};
 	CommandQueue->ExecuteCommandLists(_countof(Commands), Commands) ;
-
-	SkyBoxHeapIndex = Textures["Tex_sunsetcube1024"]->HeapIndex;
 
 	FlushCommandQueue();
 	return true;
@@ -150,9 +155,6 @@ void ShapesApp::InitCamera()
 
 void ShapesApp::BuildTextures()
 {
-	UINT TexturesCount = 0;
-	auto DescHeapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE( DescriptorHeap->GetCPUDescriptorHandleForHeapStart());
-
 	std::string TextureDirectory = "Assets\\Textures";
 	assert(std::filesystem::exists(TextureDirectory));
 
@@ -165,34 +167,70 @@ void ShapesApp::BuildTextures()
 		auto OriginalFileName = Entry.path().stem().string();
 		if (TextureConverter::IsGivenFileaNormalMap(OriginalFileName))
 			NewTexture->bIsDiffusedTexture = false;
-
 		NewTexture->Name =  "Tex_" + OriginalFileName;
 		NewTexture->Filename = Entry.path().wstring();
-		NewTexture->HeapIndex = TexturesCount;
 		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(DxDevice3D.Get(), CommandList.Get(),
 			NewTexture->Filename.c_str(), NewTexture->Resource, NewTexture->UploadHeap));
 
+		if ( !TextureConverter::IsGivenFileaCubeMap(OriginalFileName) )
+			DiffTexture2DCaches.push_back(NewTexture.get());
+		Textures[NewTexture->Name] = move(NewTexture);
+	}
+
+}
+void ShapesApp::BuildDescriptors()
+{
+	UINT DescriptorsSlot = 0;
+	auto HeapStart = CD3DX12_CPU_DESCRIPTOR_HANDLE(SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
+	for (auto TextureData : DiffTexture2DCaches)
+	{
+		TextureData->DescriptorHeapIndex = DescriptorsSlot;
+
+		auto DescHeapHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++ , CbvSrvUavDescriptorSize);
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.Format = NewTexture->Resource.Get()->GetDesc().Format;
+		srvDesc.Format = TextureData->Resource.Get()->GetDesc().Format;
 		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.MipLevels = NewTexture->Resource.Get()->GetDesc().MipLevels;
+		srvDesc.Texture2D.MipLevels = TextureData->Resource.Get()->GetDesc().MipLevels;
 		srvDesc.Texture2D.ResourceMinLODClamp = 0;
-
-		if (TextureConverter::IsGivenFileaCubeMap(OriginalFileName))
-		{
-			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-			srvDesc.TextureCube.MostDetailedMip = 0;
-			srvDesc.TextureCube.MipLevels = NewTexture->Resource.Get()->GetDesc().MipLevels;
-			srvDesc.TextureCube.ResourceMinLODClamp = 0;
-		}
-		DxDevice3D->CreateShaderResourceView(NewTexture->Resource.Get(), &srvDesc, DescHeapCpuHandle);
-		DescHeapCpuHandle.Offset(1, CbvSrvUavDescriptorSize);
-		Textures[NewTexture->Name] = move(NewTexture);
-		TexturesCount++;
+		DxDevice3D->CreateShaderResourceView(TextureData->Resource.Get(), &srvDesc, DescHeapHandle);
 	}
-} 
+	//ShadowMap
+	ShadowMapHeapIndex = DescriptorsSlot;
+	auto ShadowMapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
+	auto DepthHeapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(GetDsvHeapCpuHandle(), 1, DsvDescriptorSize);
+	ShadowMapObj->BuildDescriptors(ShadowMapCpuHandle, DepthHeapCpuHandle);
+
+	//Skybox
+	auto& TextureData = Textures[SkyBox];
+	TextureData->DescriptorHeapIndex = DescriptorsSlot;
+	auto SKyboxDescHeapHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
+	D3D12_SHADER_RESOURCE_VIEW_DESC SkyboxSrvDesc = {};
+	SkyboxSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+	SkyboxSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	SkyboxSrvDesc.Format = TextureData->Resource.Get()->GetDesc().Format;
+	SkyboxSrvDesc.TextureCube.MostDetailedMip = 0;
+	SkyboxSrvDesc.TextureCube.MipLevels = TextureData->Resource.Get()->GetDesc().MipLevels;
+	SkyboxSrvDesc.TextureCube.ResourceMinLODClamp = 0;
+	DxDevice3D->CreateShaderResourceView(TextureData->Resource.Get(), &SkyboxSrvDesc, SKyboxDescHeapHandle);
+
+	//NullSrv
+	UINT NullSrvSlot = DescriptorsSlot;
+	auto NullSrvCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
+	D3D12_SHADER_RESOURCE_VIEW_DESC NullSrvDesc = {};
+	NullSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	NullSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	NullSrvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	NullSrvDesc.Texture2D.MostDetailedMip = 0;
+	NullSrvDesc.Texture2D.MipLevels = 1;
+	NullSrvDesc.Texture2D.ResourceMinLODClamp = 0;
+	DxDevice3D->CreateShaderResourceView(nullptr, &NullSrvDesc, NullSrvCpuHandle);
+
+	NullSrvGpuHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+		NullSrvSlot, CbvSrvUavDescriptorSize);
+}
+
 
 void ShapesApp::BuildMaterials()
 {
@@ -201,7 +239,7 @@ void ShapesApp::BuildMaterials()
 		if (!Value->bIsDiffusedTexture)
 			continue;
 		auto NewMaterial = std::make_unique<Material>();
-		NewMaterial->DiffuseSrvHeapIndex = Textures[Key]->HeapIndex;
+		NewMaterial->DiffuseSrvHeapIndex = Textures[Key]->DescriptorHeapIndex;
 		NewMaterial->DiffuseAlbedo = DirectX::XMFLOAT4(1,1,1,1);
 		NewMaterial->FresnelR0 = DirectX::XMFLOAT3(0.2f, 0.2f, 0.2f);  // Increased for more visible specular
 		NewMaterial->Roughness = 0.1f;  // Lower roughness = sharper, more visible highlights
@@ -233,7 +271,7 @@ UINT ShapesApp::GetHeapIndexOfTexture(std::string TexName)
 		assert(false && "Texture name is not present");
 		return -1;
 	}
-	return it->second.get()->HeapIndex;
+	return it->second.get()->DescriptorHeapIndex;
 }
 
 void ShapesApp::Update(const GameTime& Gt)
@@ -265,28 +303,59 @@ void ShapesApp::UpdateConstBuffers()
 	DirectX::XMMATRIX XProj = ViewCamera->GetProj();
 	DirectX::XMMATRIX XViewProj = DirectX::XMMatrixMultiply(XView, XProj);
 	auto EyePos = ViewCamera->GetPosition3f();
-
 	PassConstBuffer PassConstBufferData = {};
 	// Transpose before sending to GPU! Which changes row majour to column majour
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.View, DirectX::XMMatrixTranspose(XView));
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.Proj, DirectX::XMMatrixTranspose(XProj));
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.ViewProj, DirectX::XMMatrixTranspose(XViewProj));
 	PassConstBufferData.Eye = EyePos;
+	// Main shadow-casting light (key light)
+	PassConstBufferData.Lights[0].Direction = { -0.57735f, -0.57735f, -0.57735f };
+	PassConstBufferData.Lights[0].Strength = { 0.7f, 0.7f, 0.7f };
 
-	// Light 0: Upper-right key light (creates specular highlights on plane)
-	PassConstBufferData.Lights[0].Direction = { -0.57735f, -0.57735f, -0.57735f };  // normalized(-1, -1, -1)
-	PassConstBufferData.Lights[0].Strength = { 0.4f, 0.4f, 0.4f };
+	// Subtle fill light from above (no shadows) - keep VERY dim
+	PassConstBufferData.Lights[1].Direction = { 0, 1, 0 };
+	PassConstBufferData.Lights[1].Strength = { 0.25f, 0.25f, 0.25f };
 
-	// Light 1: Top-down light (illuminates floor)					
-	PassConstBufferData.Lights[1].Direction = { 0, 1, 0 };			
-	PassConstBufferData.Lights[1].Strength = { 0.7f, 0.7f, 0.7f };	
+	// Subtle rim light (no shadows) - keep VERY dim
+	PassConstBufferData.Lights[2].Direction = { 0.7071f, -0.0f, 0.7071f };
+	PassConstBufferData.Lights[2].Strength = { 0.35f, 0.35f, 0.35f };								
 
-	// Light 2: Soft fill light from left (reduces harsh shadows)										
-	PassConstBufferData.Lights[2].Direction = { 0.7071f, -0.0f, 0.7071f };  // normalized(1, 0, -1)	
-	PassConstBufferData.Lights[2].Strength = { 0.8f, 0.8f, 0.8f };									
 
+
+	DirectX::XMVECTOR LightDir = DirectX::XMLoadFloat3(&PassConstBufferData.Lights[0].Direction);
+	DirectX::XMVECTOR LightPos = DirectX::XMVectorScale(LightDir, -2 * SceneSphereBound.Radius);
+	DirectX::XMVECTOR FocusPt = DirectX::XMVectorZero();
+	DirectX::XMVECTOR UpDir = DirectX::XMVectorSet(0, 1, 0, 0);
+	XView = DirectX::XMMatrixLookAtLH(LightPos, FocusPt, UpDir);
+	DirectX::XMFLOAT3 LightSpacePos;
+	DirectX::XMStoreFloat3(&LightSpacePos, DirectX::XMVector3TransformCoord(FocusPt, XView));
+	float Left = LightSpacePos.x - SceneSphereBound.Radius;
+	float Right = LightSpacePos.x + SceneSphereBound.Radius;
+	float Top = LightSpacePos.y + SceneSphereBound.Radius;
+	float Bottom = LightSpacePos.y - SceneSphereBound.Radius;
+	float Near = LightSpacePos.z - SceneSphereBound.Radius;
+	float Far = LightSpacePos.z + SceneSphereBound.Radius;
+	XProj = DirectX::XMMatrixOrthographicOffCenterLH(Left,Right,Bottom,Top,Near,Far);
+	XViewProj = DirectX::XMMatrixMultiply(XView, XProj);
+	DirectX::XMStoreFloat3(&EyePos, LightPos);
+	DirectX::XMMATRIX T(		// Transform NDC space [-1,+1]^2 to texture space [0,1]^2
+		0.5f, 0.0f, 0.0f, 0.0f,
+		0.0f, -0.5f, 0.0f, 0.0f,
+		0.0f, 0.0f, 1.0f, 0.0f,
+		0.5f, 0.5f, 0.0f, 1.0f);
+	DirectX::XMMATRIX ShadowTransform = XViewProj * T;
+	PassConstBuffer ShadowPassBufferData = {};
+	DirectX::XMStoreFloat4x4(&ShadowPassBufferData.View, DirectX::XMMatrixTranspose(XView));
+	DirectX::XMStoreFloat4x4(&ShadowPassBufferData.Proj, DirectX::XMMatrixTranspose(XProj));
+	DirectX::XMStoreFloat4x4(&ShadowPassBufferData.ViewProj, DirectX::XMMatrixTranspose(XViewProj));
+	DirectX::XMStoreFloat4x4(&ShadowPassBufferData.ShadowTransform, DirectX::XMMatrixTranspose(ShadowTransform));
+	ShadowPassBufferData.Eye = EyePos;
+
+
+	DirectX::XMStoreFloat4x4(&PassConstBufferData.ShadowTransform, DirectX::XMMatrixTranspose(ShadowTransform));
 	PassConstBufferRes->CopyData(0, PassConstBufferData);	
-
+	PassConstBufferRes->CopyData(1, ShadowPassBufferData);
 
 	for (auto& RenderItem : RenderItems)
 	{
@@ -309,6 +378,32 @@ void ShapesApp::UpdateConstBuffers()
 	}
 }
 
+void ShapesApp::DrawSceneToShadowMap()
+{
+	auto Barier = CD3DX12_RESOURCE_BARRIER::Transition(
+		ShadowMapObj->GetResourcePtr(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	CommandList->ResourceBarrier(1, &Barier);
+
+	auto ShadowViewport = ShadowMapObj->GetViewport();
+	auto ShadowScissorRect = ShadowMapObj->GetRect();
+	CommandList->RSSetViewports(1, &ShadowViewport);
+	CommandList->RSSetScissorRects(1, &ShadowScissorRect);
+
+	CommandList->ClearDepthStencilView(ShadowMapObj->GetDsvHeapCpuHandle(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+		1, 0, 0, nullptr);
+
+	auto Dsv = ShadowMapObj->GetDsvHeapCpuHandle();
+	CommandList->OMSetRenderTargets(0, nullptr, false, &Dsv);
+
+	CommandList->SetPipelineState(PSO["ShadowOpaque"].Get());
+	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Opaque]);
+
+	auto Barier2 = CD3DX12_RESOURCE_BARRIER::Transition(
+		ShadowMapObj->GetResourcePtr(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ);
+	CommandList->ResourceBarrier(1, &Barier2);
+
+}
+
 void ShapesApp::Draw(const GameTime& Gt)
 {
 	auto CurrentFrameResource = GetCurrentFrameResource();
@@ -316,6 +411,25 @@ void ShapesApp::Draw(const GameTime& Gt)
 	ThrowIfFailed(CurrentFrameResource->CommandAlloc->Reset());
 	ThrowIfFailed(CommandList->Reset(CurrentFrameResource->CommandAlloc.Get(), PSO["Opaque"].Get()));
 
+	ID3D12DescriptorHeap* DescHeap[] = {SrvDescriptorHeap.Get()};
+	CommandList->SetDescriptorHeaps(_countof(DescHeap), DescHeap);
+	CommandList->SetGraphicsRootSignature(RootSignature.Get());
+	
+	auto DescHeapGpuAddress = SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	CommandList->SetGraphicsRootDescriptorTable(2, DescHeapGpuAddress);  // TexTable
+	
+	//--------------------------
+	
+
+	UINT PassSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstBuffer));
+	auto CamPassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get();
+	auto CamPassBufferGpuAddress = CamPassConstBufferRes->GetResourceGpuAddress() + 1 * PassSize;
+	CommandList->SetGraphicsRootConstantBufferView(0, CamPassBufferGpuAddress);
+	CommandList->SetGraphicsRootDescriptorTable(4, NullSrvGpuHandle);
+
+	DrawSceneToShadowMap();
+
+	
 	auto Barier = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBufferResource(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 	CommandList->ResourceBarrier(1, &Barier);
 
@@ -323,26 +437,28 @@ void ShapesApp::Draw(const GameTime& Gt)
 	CommandList->RSSetScissorRects(1, &ScissorRect);
 
 	CommandList->ClearRenderTargetView(CurrentBackBufferHeapDescHandle(), DirectX::Colors::BurlyWood, 0, nullptr);
-	CommandList->ClearDepthStencilView(DepthStencilHeapDescHandle(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+	CommandList->ClearDepthStencilView(GetDsvHeapCpuHandle(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
 		1, 0, 0, nullptr);
 
 	auto Rtv = CurrentBackBufferHeapDescHandle();
-	auto Dsv = DepthStencilHeapDescHandle();
+	auto Dsv = GetDsvHeapCpuHandle();
 	CommandList->OMSetRenderTargets(1, &Rtv, true, &Dsv);
 
-	ID3D12DescriptorHeap* DescHeap[] = {DescriptorHeap.Get()};
-	CommandList->SetDescriptorHeaps(_countof(DescHeap), DescHeap);
+	auto PassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get();
+	auto PassBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
+	CommandList->SetGraphicsRootConstantBufferView(0, PassBufferGpuAddress);
 
-	CommandList->SetGraphicsRootSignature(RootSignature.Get());
-
+	CD3DX12_GPU_DESCRIPTOR_HANDLE ShadowSkyGpuHandle(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	ShadowSkyGpuHandle.Offset(ShadowMapHeapIndex, CbvSrvUavDescriptorSize);
+	CommandList->SetGraphicsRootDescriptorTable(4, ShadowSkyGpuHandle);
+	
+	CommandList->SetPipelineState(PSO["Opaque"].Get());
 	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Opaque]);
+	
+	CommandList->SetPipelineState(PSO["ShadowDebug"].Get());
+	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::ShadowDebug]);
 
 	CommandList->SetPipelineState(PSO["Sky"].Get());
-
-	auto DescHeapGpuAddress = CD3DX12_GPU_DESCRIPTOR_HANDLE(DescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	DescHeapGpuAddress.Offset(SkyBoxHeapIndex, CbvSrvUavDescriptorSize);
-	CommandList->SetGraphicsRootDescriptorTable(4, DescHeapGpuAddress);
-
 	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Skybox]);
 
 
@@ -363,13 +479,6 @@ void ShapesApp::Draw(const GameTime& Gt)
 
 void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<RenderItem*>& RenderItem)
 {
-	auto PassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get() ;
-	auto PassBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
-	CommandList->SetGraphicsRootConstantBufferView(0, PassBufferGpuAddress);
-
-	auto DescHeapGpuAddress = DescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-	CommandList->SetGraphicsRootDescriptorTable(2, DescHeapGpuAddress);  // TexTable
-
 	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get() ;
 	auto MatConstBufferRes = GetCurrentFrameResource()->MatConstBufferRes.get() ;
 
@@ -407,13 +516,13 @@ void ShapesApp::BuildRootSignature()
 	RootParameter[1].InitAsConstantBufferView(1,0);
 
 	CD3DX12_DESCRIPTOR_RANGE TextureDescTable;
-	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MAX_TEXTURES, 0, 0);
+	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MAX_TEXTURES, 0, 0);		//Textures
 	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
 	RootParameter[3].InitAsConstantBufferView(2,0, D3D12_SHADER_VISIBILITY_PIXEL);	//Material
 
-	CD3DX12_DESCRIPTOR_RANGE SkyTexDescTable;
-	SkyTexDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1, 1);
-	RootParameter[4].InitAsDescriptorTable(1,&SkyTexDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
+	CD3DX12_DESCRIPTOR_RANGE ShadowSkyDescTable;
+	ShadowSkyDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 1);  // 2 SRVs at t0-t1 in space1
+	RootParameter[4].InitAsDescriptorTable(1,&ShadowSkyDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
 
 
 	auto Samplers = d3dUtil::GetStaticSamplers();
@@ -455,6 +564,12 @@ void ShapesApp::BuildShadersAndInputLayout()
 
 	Shaders["SkyVertex"] = d3dUtil::CompileShader(L"src\\Shaders\\Skybox.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["SkyPixel"] = d3dUtil::CompileShader(L"src\\Shaders\\Skybox.hlsl", nullptr, "PS", "ps_5_1");
+
+	Shaders["ShadowVS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMap.hlsl", nullptr, "VS", "vs_5_1");
+	Shaders["ShadowPS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMap.hlsl", nullptr, "PS", "ps_5_1");
+	
+	Shaders["ShadowDebugVS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMapDebug.hlsl", nullptr, "VS", "vs_5_1");
+	Shaders["ShadowDebugPS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMapDebug.hlsl", nullptr, "PS", "ps_5_1");
 }
 
 void ShapesApp::BuildGeometryResource()
@@ -475,6 +590,7 @@ void ShapesApp::BuildGeometryResource()
 	}
 
 	GeometryGenerator GeoGen;
+	//SkyBox
 	GeometryGenerator::MeshData SphereGeo = GeoGen.CreateSphere(1.0f, 24, 24);
 	auto SkyboxSphere = std::make_unique<MeshGeometry>();
 	SkyboxSphere->Name = "Skybox";
@@ -608,8 +724,27 @@ void ShapesApp::BuildGeometryResource()
 	SurfaceMeshPartition.BaseVertexLocation = 0;
 	SurfaceMeshPartition.IndexCount = static_cast<UINT>(SurfaceIndices.size());
 	SurfaceMeshGeo->DrawArgs["Base"] = SurfaceMeshPartition;
-
 	MeshGeometries[SurfaceMeshGeo->Name] = move(SurfaceMeshGeo);
+
+	//ShadowDebug Plane Layer
+	GeometryGenerator::MeshData QuadGeo = GeoGen.CreateQuad(0, 0, 1, 1, 0);
+	auto DebugQuad = std::make_unique<MeshGeometry>();
+	DebugQuad->Name = "DebugQuad";
+	DebugQuad->VertexByteStride = sizeof(GeometryGenerator::Vertex);
+	DebugQuad->VertexBufferByteSize = static_cast<UINT>(QuadGeo.Vertices.size() * sizeof(GeometryGenerator::Vertex));
+	DebugQuad->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+		QuadGeo.Vertices.data(), DebugQuad->VertexBufferByteSize, DebugQuad->VertexBufferUploader);
+	DebugQuad->IndexFormat = DXGI_FORMAT_R16_UINT;
+	DebugQuad->IndexBufferByteSize = static_cast<UINT>(QuadGeo.GetIndices16().size() * sizeof(uint16_t));
+	DebugQuad->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
+		QuadGeo.GetIndices16().data(), DebugQuad->IndexBufferByteSize, DebugQuad->IndexBufferUploader);
+
+	SubmeshGeometry QuadQuad;
+	QuadQuad.BaseVertexLocation = 0;
+	QuadQuad.StartIndexLocation = 0;
+	QuadQuad.IndexCount = static_cast<UINT>(QuadGeo.GetIndices16().size());
+	DebugQuad->DrawArgs["Base"] = QuadQuad;
+	MeshGeometries[DebugQuad->Name] = move(DebugQuad);
 }
 
 void ShapesApp::BuildRenderItems()
@@ -626,7 +761,7 @@ void ShapesApp::BuildRenderItems()
 				DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *  
 				DirectX::XMMatrixRotationY(DirectX::XM_PI/2) *  
 				DirectX::XMMatrixRotationZ(DirectX::XM_PI/2) *
-				DirectX::XMMatrixTranslation(0.0f, 0.0f, 0.0f)
+				DirectX::XMMatrixTranslation(0.0f, -1.5f, 0.0f)
 			);
 			smgRenderItem->ObjConstBufferIndex = objIndex++;
 			smgRenderItem->MeshGeometryRef = smgMeshGeo;
@@ -641,8 +776,28 @@ void ShapesApp::BuildRenderItems()
 		}
 	}
 
+	if (MeshGeometries.find("DebugQuad") != MeshGeometries.end())
+	{
+		auto DebugQuadMeshGeo = MeshGeometries["DebugQuad"].get();
+		for (const auto& [submeshName, submesh] : DebugQuadMeshGeo->DrawArgs)
+		{
+			std::unique_ptr<RenderItem> DebugQuadRI = std::make_unique<RenderItem>();
+			DebugQuadRI->World = MathHelper::Identity4x4();
+			DebugQuadRI->ObjConstBufferIndex = objIndex++;
+			DebugQuadRI->MeshGeometryRef = DebugQuadMeshGeo;
+			auto SmgMaterial = GetMaterialForTexture("Tex_tile");
+			SmgMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_tile_nmap");
+			DebugQuadRI->MaterialRef = SmgMaterial;
+			DebugQuadRI->IndexCount = submesh.IndexCount;
+			DebugQuadRI->IndexStartLocation = submesh.StartIndexLocation;
+			DebugQuadRI->VertexStartLocation = submesh.BaseVertexLocation;
+			RenderLayerItems[(UINT)RenderLayer::ShadowDebug].push_back(DebugQuadRI.get());
+			RenderItems.push_back(std::move(DebugQuadRI));
+		}
+	}
+
 	std::unique_ptr<RenderItem> CubeMesh = std::make_unique<RenderItem>();
-	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, 0.0f, 0.0f));  // Move cube to the right
+	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, -1.5f, 0.0f));  // Move cube to the right
 	CubeMesh->ObjConstBufferIndex = objIndex++;
 	CubeMesh->MeshGeometryRef = MeshGeometries["Cube"].get();
 	auto CubeMeshMaterial = GetMaterialForTexture("Tex_bricks2");
@@ -672,7 +827,7 @@ void ShapesApp::BuildRenderItems()
 	DirectX::XMStoreFloat4x4(&SkyBoxMesh->World, DirectX::XMMatrixScaling(500, 500, 500));
 	SkyBoxMesh->ObjConstBufferIndex = objIndex++;
 	SkyBoxMesh->MeshGeometryRef = MeshGeometries["Skybox"].get();
-	auto SkyBoxMaterial = GetMaterialForTexture("Tex_sunsetcube1024");
+	auto SkyBoxMaterial = GetMaterialForTexture(SkyBox);
 	SkyBoxMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_default_nmap");
 	SkyBoxMesh->MaterialRef = SkyBoxMaterial;
 	SkyBoxMesh->IndexCount = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
@@ -685,7 +840,7 @@ void ShapesApp::BuildRenderItems()
 void ShapesApp::BuildFrameResources()
 {
 	UINT RenderItemCount = static_cast<UINT>(RenderItems.size()); //Total Const Buffer Data we needed
-	UINT TotalPass = 1;
+	UINT TotalPass = 2;
 	for (UINT i = 0; i < TotalFrameResources; i++)
 		FrameResources.push_back(std::make_unique<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>(DxDevice3D.Get(), TotalPass, RenderItemCount, RenderItemCount));
 }
@@ -700,7 +855,7 @@ void ShapesApp::BuildDescriptorHeap()
 	HeapDesc.NumDescriptors = MAX_TEXTURES;
 	HeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
-	ThrowIfFailed( DxDevice3D->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&DescriptorHeap)) );
+	ThrowIfFailed( DxDevice3D->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)) );
 }
 
 void ShapesApp::BuildPSO()
@@ -736,6 +891,42 @@ void ShapesApp::BuildPSO()
 	OpaquePsoDesc.SampleDesc.Quality = 0;
 	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&OpaquePsoDesc, IID_PPV_ARGS(&PSO["Opaque"])));
 
+//
+ // PSO for shadow map pass.
+ //
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC smapPsoDesc = OpaquePsoDesc;
+	smapPsoDesc.RasterizerState.DepthBias = 1000;
+	smapPsoDesc.RasterizerState.DepthBiasClamp = 0.0f;
+	smapPsoDesc.RasterizerState.SlopeScaledDepthBias = 2.0f;
+	smapPsoDesc.pRootSignature = RootSignature.Get();
+	smapPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["ShadowVS"]->GetBufferPointer()),
+		Shaders["ShadowVS"]->GetBufferSize()
+	};
+	smapPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["ShadowPS"]->GetBufferPointer()),
+		Shaders["ShadowPS"]->GetBufferSize()
+	};
+	smapPsoDesc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
+	smapPsoDesc.NumRenderTargets = 0;
+	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&smapPsoDesc, IID_PPV_ARGS(&PSO["ShadowOpaque"])));
+
+	//ShdaowMap Debug Layer
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC SmapDebugPsoDesc = OpaquePsoDesc;
+	SmapDebugPsoDesc.pRootSignature = RootSignature.Get();
+	SmapDebugPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["ShadowDebugVS"]->GetBufferPointer()),
+		Shaders["ShadowDebugVS"]->GetBufferSize()
+	};
+	SmapDebugPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(Shaders["ShadowDebugPS"]->GetBufferPointer()),
+		Shaders["ShadowDebugPS"]->GetBufferSize()
+	};
+	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&SmapDebugPsoDesc, IID_PPV_ARGS(&PSO["ShadowDebug"])));
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC SkyPsoDesc = OpaquePsoDesc;
 	SkyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;

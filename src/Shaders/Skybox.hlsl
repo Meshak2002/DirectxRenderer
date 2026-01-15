@@ -1,52 +1,5 @@
 
-#ifndef NUM_DIR_LIGHTS
-    #define NUM_DIR_LIGHTS 3
-#endif
-
-#ifndef NUM_POINT_LIGHTS
-    #define NUM_POINT_LIGHTS 0
-#endif
-
-#ifndef NUM_SPOT_LIGHTS
-    #define NUM_SPOT_LIGHTS 0
-#endif
-
-#include "LightingUtil.hlsl"
-
-Texture2D Texture[512] : register(t0);
-
-TextureCube TexSkyBox : register(t1,space1);
-
-SamplerState gsamPointWrap : register(s0);
-SamplerState gsamPointClamp : register(s1);
-SamplerState gsamLinearWrap : register(s2);
-SamplerState gsamLinearClamp : register(s3);
-SamplerState gsamAnisotropicWrap : register(s4);
-SamplerState gsamAnisotropicClamp : register(s5);
-
-cbuffer PassData : register(b0)
-{
-    float4x4 View;
-    float4x4 Proj;
-    float4x4 ViewProj;
-    float3 Eye;
-    float Padding;
-    Light TotalLights[MaxLights];
-}
-
-cbuffer ObjData : register(b1)
-{
-    float4x4 World;
-}
-
-cbuffer MaterialData : register(b2)
-{
-    float4 DiffuseAlbedo;
-    float3 FresnelR0;
-    float Shininess;
-    uint DiffuseTexIndex;
-    uint NormalTexIndex;
-}
+#include "CommonBuffer.hlsl"
 
 struct VertexIn
 {

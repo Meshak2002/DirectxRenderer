@@ -131,7 +131,7 @@ public:
 		const std::string& entrypoint,
 		const std::string& target);
 
-    static std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+    static std::array<const CD3DX12_STATIC_SAMPLER_DESC, 7> GetStaticSamplers();
 };
 
 class DxException
@@ -278,7 +278,7 @@ struct Texture
 
 	Microsoft::WRL::ComPtr<ID3D12Resource> Resource = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12Resource> UploadHeap = nullptr;
-	UINT HeapIndex=-1;
+	UINT DescriptorHeapIndex=-1;
     bool bIsDiffusedTexture = true;
 };
 

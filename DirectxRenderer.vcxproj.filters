@@ -50,6 +50,9 @@
     <ClCompile Include="src\Utility\TextureConverter.cpp">
       <Filter>Source Files\Utility</Filter>
     </ClCompile>
+    <ClCompile Include="src\Base\ShadowMap.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Base\DxRenderBase.h">
@@ -89,11 +92,16 @@
       <Filter>Source Files\Utility</Filter>
     </ClInclude>
     <ClInclude Include="src\ShapesApp.h" />
+    <ClInclude Include="src\Base\ShadowMap.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\ShapesApp.hlsl" />
     <None Include="src\Shaders\LightingUtil.hlsl" />
     <None Include="packages.config" />
+    <None Include="src\Shaders\Skybox.hlsl" />
+    <None Include="src\Shaders\ShadowMap.hlsl" />
+    <None Include="src\Shaders\CommonBuffer.hlsl" />
+    <None Include="src\Shaders\ShadowMapDebug.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\Textures\Diffuse\bricks.dds" />
