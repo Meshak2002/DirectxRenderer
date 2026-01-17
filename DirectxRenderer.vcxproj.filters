@@ -53,6 +53,9 @@
     <ClCompile Include="src\Base\ShadowMap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\Base\CubeMapRT.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Base\DxRenderBase.h">
@@ -93,6 +96,7 @@
     </ClInclude>
     <ClInclude Include="src\ShapesApp.h" />
     <ClInclude Include="src\Base\ShadowMap.h" />
+    <ClInclude Include="src\Base\CubeMapRT.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\ShapesApp.hlsl" />
@@ -124,5 +128,6 @@
     <Image Include="Assets\Textures\CubeMap\grasscube1024.dds" />
     <Image Include="Assets\Textures\CubeMap\snowcube1024.dds" />
     <Image Include="Assets\Textures\CubeMap\sunsetcube1024.dds" />
+    <Image Include="Assets\Textures\Diffuse\white1x1.dds" />
   </ItemGroup>
 </Project>

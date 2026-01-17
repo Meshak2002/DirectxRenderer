@@ -159,6 +159,7 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\Base\CubeMapRT.cpp" />
     <ClCompile Include="src\Base\GameTime.cpp" />
     <ClCompile Include="src\Base\DxRenderBase.cpp" />
     <ClCompile Include="src\Base\Camera.cpp" />
@@ -175,6 +176,7 @@
     <ClCompile Include="src\SimpleScreenApp.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\Base\CubeMapRT.h" />
     <ClInclude Include="src\Base\GameTime.h" />
     <ClInclude Include="src\Base\DxRenderBase.h" />
     <ClInclude Include="src\Base\Camera.h" />
@@ -208,6 +210,7 @@
     <Image Include="Assets\Textures\Diffuse\stone.dds" />
     <Image Include="Assets\Textures\Diffuse\tile.dds" />
     <Image Include="Assets\Textures\Diffuse\water1.dds" />
+    <Image Include="Assets\Textures\Diffuse\white1x1.dds" />
     <Image Include="Assets\Textures\Diffuse\WoodCrate01.dds" />
     <Image Include="Assets\Textures\Diffuse\WoodCrate02.dds" />
     <Image Include="Assets\Textures\Normals\bricks2_nmap.dds" />

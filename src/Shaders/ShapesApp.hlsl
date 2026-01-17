@@ -59,6 +59,14 @@ float4 PS(VertexOut VOutput)    : SV_TARGET
     
     DirectLight *= ShadowFactor[0];
     float4 LightColor = ambient + DirectLight;
+    
+    //Speclular Reflectiom
+    float3 EyeToPixel = -ToEye;
+    float3 ReflectedRay = reflect(EyeToPixel, NormalW);
+    float3 ReflectionColor = TexSkyBox.Sample(gsamLinearWrap, ReflectedRay).rgb;
+    float3 FresnelEffect = SchlickFresnel(FresnelR0, NormalW, ReflectedRay);
+    LightColor.rgb += Shine * FresnelEffect * ReflectionColor;
+    
     LightColor.a = mDiffuseAlbedo.a;
     return LightColor;
 }

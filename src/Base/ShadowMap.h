@@ -6,7 +6,7 @@ class ShadowMap
 public:
 	ShadowMap() = delete;
 	ShadowMap(const ShadowMap&) = delete;
-	ShadowMap& operator=(ShadowMap&) = delete;
+	ShadowMap& operator=(const ShadowMap&) = delete;
 	
 	ShadowMap(ID3D12Device* aDevice, UINT aWidth, UINT aHeight);
 	D3D12_VIEWPORT GetViewport();

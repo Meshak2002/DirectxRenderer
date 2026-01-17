@@ -54,6 +54,7 @@ protected:
 	virtual void OnResize();
 	virtual void Update(const GameTime& Gt);
 	virtual void Draw(const GameTime& Gt);
+	virtual void CreateRtvDsvHeap();
 
 	virtual void OnKeyboardDown(WPARAM Key) { };
 	virtual void OnKeyboardUp(WPARAM Key) { };
@@ -65,12 +66,14 @@ protected:
 	float AspectRatio() const;
 	D3D12_CPU_DESCRIPTOR_HANDLE CurrentBackBufferHeapDescHandle() const;
 	D3D12_CPU_DESCRIPTOR_HANDLE GetDsvHeapCpuHandle() const;
+	D3D12_CPU_DESCRIPTOR_HANDLE GetRtvHeapCpuHandle() const;
 	ID3D12Resource* CurrentBackBufferResource() const;
 	ID3D12Resource* DepthStencilResource() const;
 	void FlushCommandQueue();
 
+	static const int SwapChainBuffferCount = 2;
 private:
-	Microsoft::WRL::ComPtr<ID3D12Resource> SwapChainBuffer[2];
+	Microsoft::WRL::ComPtr<ID3D12Resource> SwapChainBuffer[SwapChainBuffferCount];
 	Microsoft::WRL::ComPtr<ID3D12Resource> DepthBuffer;
 
 	UINT MsaaQuality = 0;
@@ -88,5 +91,4 @@ private:
 	
 	void CreateSwapChain();
 	void CreateCommandObjects();
-	void CreateRtvDsvHeap();
 };

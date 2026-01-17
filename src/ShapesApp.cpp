@@ -5,6 +5,7 @@
 #include "Utility/TextureConverter.h"
 #include <filesystem>
 #include "Utility/GeometryGenerator.h"
+#include "Base/CubeMapRT.h"
 
 const int gNumFrameResources = 3;
 
@@ -17,9 +18,9 @@ void ConvertToDDsTexturesOnStartup()
 	TextureConverter::ConversionOptions options;
 	options.Format = TextureConverter::CompressionFormat::BC7_UNORM;  // High quality compression
 	options.Speed = TextureConverter::CompressionSpeed::QUICK;
-	options.GenerateMipmaps   = true;     
-	options.OverwriteExisting = false;   
-	options.FlipVertical      = false;       
+	options.GenerateMipmaps = true;
+	options.OverwriteExisting = false;
+	options.FlipVertical = false;
 
 	auto results = TextureConverter::ConvertDirectory(
 		"Assets\\Models",       // Search in this folder
@@ -39,9 +40,14 @@ void ConvertToDDsTexturesOnStartup()
 	std::cout << "===== CONVERSION COMPLETE =====" << std::endl;
 }
 
-ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance) , SkyBox{"Tex_sunsetcube1024"}
+ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance), SkyBox{ "Tex_sunsetcube1024" }
+, bDebugShadowMap{ false }
 {
 	ViewCamera = std::make_unique<Camera>();
+	for (int i = 0; i < 6; i++)
+	{
+		CubeMapCameras[i] = std::make_unique<Camera>();
+	}
 }
 
 ShapesApp::~ShapesApp()
@@ -88,7 +94,7 @@ void ShapesApp::OnMouseMove(WPARAM BtnState, int X, int Y)
 	{
 		float VarianceOnX = (float)(MouseLastPos.x - X);
 		float VarianceOnY = (float)(MouseLastPos.y - Y);
-		
+
 		VarianceOnX = DirectX::XMConvertToRadians(0.25f * VarianceOnX);
 		VarianceOnY = DirectX::XMConvertToRadians(0.25f * VarianceOnY);
 
@@ -104,7 +110,24 @@ void ShapesApp::OnMouseMove(WPARAM BtnState, int X, int Y)
 void ShapesApp::OnResize()
 {
 	DxRenderBase::OnResize();
-	ViewCamera->SetLens(0.25f * DirectX::XM_PI, AspectRatio(), 1, 1000);
+	ViewCamera->SetLens(0.25f * DirectX::XM_PI, AspectRatio(), 0.1f, 1000.0f);
+}
+
+void ShapesApp::CreateRtvDsvHeap()
+{
+	D3D12_DESCRIPTOR_HEAP_DESC RtvHeapDesc;
+	RtvHeapDesc.NumDescriptors = SwapChainBuffferCount + 6; //Main buffers + CubeMap faces
+	RtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	RtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	RtvHeapDesc.NodeMask = 0;
+	ThrowIfFailed(DxDevice3D->CreateDescriptorHeap(&RtvHeapDesc, IID_PPV_ARGS(&RtvHeap)));
+	D3D12_DESCRIPTOR_HEAP_DESC DsvHeapDesc;
+	DsvHeapDesc.NumDescriptors = 3;  // Main depth buffer + Shadow + CubeMap
+	DsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	DsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	DsvHeapDesc.NodeMask = 0;
+	ThrowIfFailed(DxDevice3D->CreateDescriptorHeap(&DsvHeapDesc, IID_PPV_ARGS(&DsvHeap)));
+
 }
 
 bool ShapesApp::Initialize()
@@ -113,14 +136,18 @@ bool ShapesApp::Initialize()
 		return false;
 	ConvertToDDsTexturesOnStartup();
 	InitCamera();
+	InitCubeMapCameras(0, 0, 0);
 
-	UINT DepthTextureWidth  = 2048;
+	UINT DepthTextureWidth = 2048;
 	UINT DepthTextureHeight = 2048;
 	ShadowMapObj = std::make_unique<ShadowMap>(DxDevice3D.Get(), DepthTextureWidth, DepthTextureHeight);
+	UINT CubeMapWidth = 512;
+	UINT CubeMapHeight = 512;
+	CubeMapObj = std::make_unique<CubeMapRT>(DxDevice3D.Get(), CubeMapWidth, CubeMapHeight, BackBufferFormat, DepthStencilFormat);
 
-	SceneSphereBound.Center =  DirectX::XMFLOAT3(0.0f, -1.5f, 0.0f);
+	SceneSphereBound.Center = DirectX::XMFLOAT3(0.0f, -1.5f, 0.0f);
 	SceneSphereBound.Radius = 10.0f;
-	
+
 	ThrowIfFailed(CommandList->Reset(CommandAlloc.Get(), nullptr));
 	BuildRootSignature();
 	BuildShadersAndInputLayout();
@@ -129,15 +156,14 @@ bool ShapesApp::Initialize()
 	BuildGeometryResource();
 	BuildTextures();
 	BuildDescriptors();
-	BuildMaterials();
 	BuildRenderItems();
 
 	BuildFrameResources();
 	BuildPSO();
 
 	CommandList->Close();
-	ID3D12CommandList* Commands[] = {CommandList.Get()};
-	CommandQueue->ExecuteCommandLists(_countof(Commands), Commands) ;
+	ID3D12CommandList* Commands[] = { CommandList.Get() };
+	CommandQueue->ExecuteCommandLists(_countof(Commands), Commands);
 
 	FlushCommandQueue();
 	return true;
@@ -153,6 +179,43 @@ void ShapesApp::InitCamera()
 	ViewCamera->UpdateViewMatrix();
 }
 
+void ShapesApp::InitCubeMapCameras(float CenterX, float CenterY, float CenterZ)
+{
+	float PositionX{ CenterX };
+	float PositionY{ CenterY };
+	float PositionZ{ CenterZ };
+	DirectX::XMFLOAT3 Position{ PositionX, PositionY, PositionZ };
+	DirectX::XMFLOAT3 Target;
+	DirectX::XMFLOAT3 Up;
+
+	DirectX::XMFLOAT3 Targets[6] =
+	{
+		DirectX::XMFLOAT3(PositionX + 1, PositionY, PositionZ) ,
+		DirectX::XMFLOAT3(PositionX - 1, PositionY, PositionZ) ,
+		DirectX::XMFLOAT3(PositionX, PositionY + 1, PositionZ) ,
+		DirectX::XMFLOAT3(PositionX, PositionY - 1, PositionZ) ,
+		DirectX::XMFLOAT3(PositionX, PositionY, PositionZ + 1) ,
+		DirectX::XMFLOAT3(PositionX, PositionY, PositionZ - 1)
+	};
+	DirectX::XMFLOAT3 Ups[6] =
+	{
+		 DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f),
+		 DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f),
+		 DirectX::XMFLOAT3(0.0f, 0.0f, -1.0f),
+		 DirectX::XMFLOAT3(0.0f, 0.0f, 1.0f),
+		 DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f),
+		 DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f)
+	};
+
+	for (int i = 0; i < 6; i++)
+	{
+		CubeMapCameras[i]->SetPosition(Position);
+		CubeMapCameras[i]->LookAt(CubeMapCameras[i]->GetPosition3f(), Targets[i], Ups[i]);
+		CubeMapCameras[i]->SetLens(0.5f * DirectX::XM_PI, 1.0f, 0.1f, 1000.0f);  // 90 degrees FOV for seamless cube mapping
+		CubeMapCameras[i]->UpdateViewMatrix();
+	}
+}
+
 void ShapesApp::BuildTextures()
 {
 	std::string TextureDirectory = "Assets\\Textures";
@@ -165,15 +228,18 @@ void ShapesApp::BuildTextures()
 			continue;
 		auto NewTexture = std::make_unique<Texture>();
 		auto OriginalFileName = Entry.path().stem().string();
-		if (TextureConverter::IsGivenFileaNormalMap(OriginalFileName))
-			NewTexture->bIsDiffusedTexture = false;
-		NewTexture->Name =  "Tex_" + OriginalFileName;
+		NewTexture->Name = "Tex_" + OriginalFileName;
 		NewTexture->Filename = Entry.path().wstring();
 		ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(DxDevice3D.Get(), CommandList.Get(),
 			NewTexture->Filename.c_str(), NewTexture->Resource, NewTexture->UploadHeap));
+		
+		NewTexture->bIsNormal	   = TextureConverter::IsGivenFileaNormalMap(OriginalFileName);
+		NewTexture->bIsCubeTexture =  TextureConverter::IsGivenFileaCubeMap(OriginalFileName);
 
-		if ( !TextureConverter::IsGivenFileaCubeMap(OriginalFileName) )
-			DiffTexture2DCaches.push_back(NewTexture.get());
+		NewTexture->bIsDiffusedTexture = (!NewTexture->bIsNormal && !NewTexture->bIsCubeTexture);
+		
+		if(!NewTexture->bIsCubeTexture)
+			Texture2DStack.push_back(NewTexture.get());
 		Textures[NewTexture->Name] = move(NewTexture);
 	}
 
@@ -182,11 +248,11 @@ void ShapesApp::BuildDescriptors()
 {
 	UINT DescriptorsSlot = 0;
 	auto HeapStart = CD3DX12_CPU_DESCRIPTOR_HANDLE(SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
-	for (auto TextureData : DiffTexture2DCaches)
+	for (auto TextureData : Texture2DStack)
 	{
 		TextureData->DescriptorHeapIndex = DescriptorsSlot;
 
-		auto DescHeapHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++ , CbvSrvUavDescriptorSize);
+		auto DescHeapHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -197,7 +263,7 @@ void ShapesApp::BuildDescriptors()
 		DxDevice3D->CreateShaderResourceView(TextureData->Resource.Get(), &srvDesc, DescHeapHandle);
 	}
 	//ShadowMap
-	ShadowMapHeapIndex = DescriptorsSlot;
+	ShadowSkyMapHeapIndex = DescriptorsSlot;
 	auto ShadowMapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
 	auto DepthHeapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(GetDsvHeapCpuHandle(), 1, DsvDescriptorSize);
 	ShadowMapObj->BuildDescriptors(ShadowMapCpuHandle, DepthHeapCpuHandle);
@@ -215,6 +281,23 @@ void ShapesApp::BuildDescriptors()
 	SkyboxSrvDesc.TextureCube.ResourceMinLODClamp = 0;
 	DxDevice3D->CreateShaderResourceView(TextureData->Resource.Get(), &SkyboxSrvDesc, SKyboxDescHeapHandle);
 
+	//ShadowMap2
+	ShadowCubeMapHeapIndex = DescriptorsSlot;
+	ShadowMapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
+	ShadowMapObj->BuildDescriptors(ShadowMapCpuHandle, DepthHeapCpuHandle);
+
+	//CubeMap
+	SrvCubeMapHeapIndex = DescriptorsSlot;
+	auto SrvCubeMapCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
+	auto DepthCubeMpaCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(GetDsvHeapCpuHandle(), 2, DsvDescriptorSize);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE RtvCubeMapCpuHandles[6];
+	for (int i = 0; i < 6; i++)
+	{
+		RtvCubeMapCpuHandles[i] = CD3DX12_CPU_DESCRIPTOR_HANDLE(GetRtvHeapCpuHandle(),
+			SwapChainBuffferCount + i, RtvDescriptorSize);
+	}
+	CubeMapObj->BuildDescriptors(SrvCubeMapCpuHandle, RtvCubeMapCpuHandles, DepthCubeMpaCpuHandle);
+
 	//NullSrv
 	UINT NullSrvSlot = DescriptorsSlot;
 	auto NullSrvCpuHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(HeapStart, DescriptorsSlot++, CbvSrvUavDescriptorSize);
@@ -226,52 +309,75 @@ void ShapesApp::BuildDescriptors()
 	NullSrvDesc.Texture2D.MipLevels = 1;
 	NullSrvDesc.Texture2D.ResourceMinLODClamp = 0;
 	DxDevice3D->CreateShaderResourceView(nullptr, &NullSrvDesc, NullSrvCpuHandle);
-
 	NullSrvGpuHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
 		NullSrvSlot, CbvSrvUavDescriptorSize);
 }
 
 
-void ShapesApp::BuildMaterials()
+Material* ShapesApp::BuildMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
+	 float aDiffuseAlbedo , float aFresnalRO , float aShininess)
 {
-	for(const auto& [Key,Value] : Textures)
+	auto MaterialName = "Mat_" + aMatName;
+	if (Materials.find(MaterialName) != Materials.end())
 	{
-		if (!Value->bIsDiffusedTexture)
-			continue;
-		auto NewMaterial = std::make_unique<Material>();
-		NewMaterial->DiffuseSrvHeapIndex = Textures[Key]->DescriptorHeapIndex;
-		NewMaterial->DiffuseAlbedo = DirectX::XMFLOAT4(1,1,1,1);
-		NewMaterial->FresnelR0 = DirectX::XMFLOAT3(0.2f, 0.2f, 0.2f);  // Increased for more visible specular
-		NewMaterial->Roughness = 0.1f;  // Lower roughness = sharper, more visible highlights
-		Materials[std::string("Mat_")+ Key] = move(NewMaterial);
-	}
-}
-
-Material* ShapesApp::GetMaterialForTexture(std::string TexName)
-{
-	auto TextureName = "Mat_" + TexName;
-	auto it = Materials.find(TextureName);
-	if (it == Materials.end())
-	{
-		std::string ErrorMsg = "Material not found: " + TextureName + "\n";
+		std::string ErrorMsg = "[Error] Material already Exists: " + MaterialName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Material for the given Texture name is not present");
+		assert(false && "Building an existing material with same name.");
 		return nullptr;
 	}
-	return it->second.get();
+	auto DiffTextureName = "Tex_" + aDiffuseTexName;
+	if (Textures.find(DiffTextureName) == Textures.end())
+	{
+		std::string ErrorMsg = "[Error] Texture not found: " + DiffTextureName + "\n";
+		::OutputDebugStringA(ErrorMsg.c_str());
+		assert(false && "Given Texture name is not present");
+		return nullptr;
+	}
+	auto NormTextureName = "Tex_" + aNormalTexName;
+	if (Textures.find(NormTextureName) == Textures.end())
+	{
+		std::string ErrorMsg = "[Error] Texture not found: " + NormTextureName + "\n";
+		::OutputDebugStringA(ErrorMsg.c_str());
+		assert(false && "Given Texture name is not present");
+		return nullptr;
+	}
+	auto& DiffTexture = Textures[DiffTextureName];
+	if (!DiffTexture->bIsDiffusedTexture)
+	{
+		std::string ErrorMsg = "[Error] Given Main Texture was not a Diffused Texture: " + DiffTextureName + "\n";
+		::OutputDebugStringA(ErrorMsg.c_str());
+		assert(false && "Given Main Texture was not a Diffused Texture");
+		return nullptr;
+	}
+	auto& NormTexture = Textures[NormTextureName];
+	if (!NormTexture->bIsNormal)
+	{
+		std::string ErrorMsg = "[Error] Given Main Texture was not a Normal Texture: " + DiffTextureName + "\n";
+		::OutputDebugStringA(ErrorMsg.c_str());
+		assert(false && "Given Main Texture was not a Normal Texture");
+		return nullptr;
+	}
+	auto NewMaterial = std::make_unique<Material>();
+	NewMaterial->DiffuseSrvHeapIndex = DiffTexture->DescriptorHeapIndex;
+	NewMaterial->NormalSrvHeapIndex = NormTexture->DescriptorHeapIndex;
+	NewMaterial->DiffuseAlbedo = DirectX::XMFLOAT4(aDiffuseAlbedo, aDiffuseAlbedo, aDiffuseAlbedo, 1);
+	NewMaterial->FresnelR0 = DirectX::XMFLOAT3(aFresnalRO, aFresnalRO, aFresnalRO);  // Increase for more Reflection
+	NewMaterial->Shininess = aShininess;
+	Materials[MaterialName] = move(NewMaterial);
+	return Materials[MaterialName].get();
 }
 
-UINT ShapesApp::GetHeapIndexOfTexture(std::string TexName)
+Material* ShapesApp::GetMaterial(std::string aMaterialName)
 {
-	auto it = Textures.find(TexName);
-	if (it == Textures.end())
+	auto MaterialName = "Mat_" + aMaterialName;
+	if (Materials.find(MaterialName) == Materials.end())
 	{
-		std::string ErrorMsg = "Texture not found: " + TexName + "\n";
+		std::string ErrorMsg = "[Error] Material ain't Exists: " + MaterialName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Texture name is not present");
-		return -1;
+		assert(false && "Material ain't Exists");
+		return nullptr;
 	}
-	return it->second.get()->DescriptorHeapIndex;
+	return Materials[MaterialName].get();
 }
 
 void ShapesApp::Update(const GameTime& Gt)
@@ -314,12 +420,12 @@ void ShapesApp::UpdateConstBuffers()
 	PassConstBufferData.Lights[0].Strength = { 0.7f, 0.7f, 0.7f };
 
 	// Subtle fill light from above (no shadows) - keep VERY dim
-	PassConstBufferData.Lights[1].Direction = { 0, 1, 0 };
-	PassConstBufferData.Lights[1].Strength = { 0.25f, 0.25f, 0.25f };
+	PassConstBufferData.Lights[1].Direction = { 0, .5f, -.5f };
+	PassConstBufferData.Lights[1].Strength = { 0.55f, 0.55f, 0.55f };
 
 	// Subtle rim light (no shadows) - keep VERY dim
 	PassConstBufferData.Lights[2].Direction = { 0.7071f, -0.0f, 0.7071f };
-	PassConstBufferData.Lights[2].Strength = { 0.35f, 0.35f, 0.35f };								
+	PassConstBufferData.Lights[2].Strength = { 0.35f, 0.35f, 0.35f };
 
 
 
@@ -336,7 +442,7 @@ void ShapesApp::UpdateConstBuffers()
 	float Bottom = LightSpacePos.y - SceneSphereBound.Radius;
 	float Near = LightSpacePos.z - SceneSphereBound.Radius;
 	float Far = LightSpacePos.z + SceneSphereBound.Radius;
-	XProj = DirectX::XMMatrixOrthographicOffCenterLH(Left,Right,Bottom,Top,Near,Far);
+	XProj = DirectX::XMMatrixOrthographicOffCenterLH(Left, Right, Bottom, Top, Near, Far);
 	XViewProj = DirectX::XMMatrixMultiply(XView, XProj);
 	DirectX::XMStoreFloat3(&EyePos, LightPos);
 	DirectX::XMMATRIX T(		// Transform NDC space [-1,+1]^2 to texture space [0,1]^2
@@ -354,8 +460,27 @@ void ShapesApp::UpdateConstBuffers()
 
 
 	DirectX::XMStoreFloat4x4(&PassConstBufferData.ShadowTransform, DirectX::XMMatrixTranspose(ShadowTransform));
-	PassConstBufferRes->CopyData(0, PassConstBufferData);	
+	PassConstBufferRes->CopyData(0, PassConstBufferData);
 	PassConstBufferRes->CopyData(1, ShadowPassBufferData);
+
+	for (int i = 0; i < 6; i++)
+	{
+		XView = CubeMapCameras[i]->GetView();
+		XProj = CubeMapCameras[i]->GetProj();
+		XViewProj = DirectX::XMMatrixMultiply(XView, XProj);
+		EyePos = CubeMapCameras[i]->GetPosition3f();
+
+		PassConstBuffer CubeMapPassBufferData = {};
+		//Transpose before sending to GPU! Which changes row majour to column majour
+		DirectX::XMStoreFloat4x4(&CubeMapPassBufferData.View, DirectX::XMMatrixTranspose(XView));
+		DirectX::XMStoreFloat4x4(&CubeMapPassBufferData.Proj, DirectX::XMMatrixTranspose(XProj));
+		DirectX::XMStoreFloat4x4(&CubeMapPassBufferData.ViewProj, DirectX::XMMatrixTranspose(XViewProj));
+		CubeMapPassBufferData.Eye = EyePos;
+		// Copy lights and shadow transform from main pass
+		std::memcpy(CubeMapPassBufferData.Lights, PassConstBufferData.Lights, sizeof(PassConstBufferData.Lights));
+		CubeMapPassBufferData.ShadowTransform = PassConstBufferData.ShadowTransform;
+		PassConstBufferRes->CopyData(2 + i, CubeMapPassBufferData);
+	}
 
 	for (auto& RenderItem : RenderItems)
 	{
@@ -369,7 +494,7 @@ void ShapesApp::UpdateConstBuffers()
 		{
 			RenderItem->MaterialRef->DiffuseAlbedo,
 			RenderItem->MaterialRef->FresnelR0,
-			RenderItem->MaterialRef->Roughness,
+			RenderItem->MaterialRef->Shininess,
 			(UINT)RenderItem->MaterialRef->DiffuseSrvHeapIndex,
 			(UINT)RenderItem->MaterialRef->NormalSrvHeapIndex
 		};
@@ -404,6 +529,50 @@ void ShapesApp::DrawSceneToShadowMap()
 
 }
 
+void ShapesApp::DrawSceneToCubeMap()
+{
+	UINT PassSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstBuffer));
+	auto CamPassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get();
+	auto CubeMapViewport = CubeMapObj->GetViewport();
+	auto CubeMapScissorRect = CubeMapObj->GetRect();
+	CommandList->RSSetViewports(1, &CubeMapViewport);
+	CommandList->RSSetScissorRects(1, &CubeMapScissorRect);
+
+	CD3DX12_RESOURCE_BARRIER Barriers[2];
+	Barriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
+		CubeMapObj->GetRtResourcePtr(), D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	Barriers[1] = CD3DX12_RESOURCE_BARRIER::Transition(
+		CubeMapObj->GetDsResourcePtr(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	CommandList->ResourceBarrier(2, Barriers);
+
+	for (int i = 0; i < 6; i++)
+	{
+		CommandList->ClearRenderTargetView(CubeMapObj->GetRtvCpuHandle((size_t)i), DirectX::Colors::Black, 0, nullptr);
+		CommandList->ClearDepthStencilView(CubeMapObj->GetDsvCpuHandle(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+			1, 0, 0, nullptr);
+
+		auto Dsv = CubeMapObj->GetDsvCpuHandle();
+		auto Rtv = CubeMapObj->GetRtvCpuHandle((size_t)i);
+		CommandList->OMSetRenderTargets(1, &Rtv, true, &Dsv);
+
+		auto CamPassBufferGpuAddress = CamPassConstBufferRes->GetResourceGpuAddress() + ((2 + i) * PassSize);
+		CommandList->SetGraphicsRootConstantBufferView(0, CamPassBufferGpuAddress);
+
+		DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Opaque]);
+
+		CommandList->SetPipelineState(PSO["Sky"].Get());
+		DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Skybox]);
+		CommandList->SetPipelineState(PSO["Opaque"].Get());
+	}
+	CD3DX12_RESOURCE_BARRIER EndBarriers[2];
+	EndBarriers[0] = CD3DX12_RESOURCE_BARRIER::Transition(
+		CubeMapObj->GetRtResourcePtr(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_GENERIC_READ);
+	EndBarriers[1] = CD3DX12_RESOURCE_BARRIER::Transition(
+		CubeMapObj->GetDsResourcePtr(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COMMON);
+	CommandList->ResourceBarrier(2, EndBarriers);
+
+}
+
 void ShapesApp::Draw(const GameTime& Gt)
 {
 	auto CurrentFrameResource = GetCurrentFrameResource();
@@ -411,32 +580,37 @@ void ShapesApp::Draw(const GameTime& Gt)
 	ThrowIfFailed(CurrentFrameResource->CommandAlloc->Reset());
 	ThrowIfFailed(CommandList->Reset(CurrentFrameResource->CommandAlloc.Get(), PSO["Opaque"].Get()));
 
-	ID3D12DescriptorHeap* DescHeap[] = {SrvDescriptorHeap.Get()};
-	CommandList->SetDescriptorHeaps(_countof(DescHeap), DescHeap);
-	CommandList->SetGraphicsRootSignature(RootSignature.Get());
-	
-	auto DescHeapGpuAddress = SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
-	CommandList->SetGraphicsRootDescriptorTable(2, DescHeapGpuAddress);  // TexTable
-	
-	//--------------------------
-	
-
 	UINT PassSize = d3dUtil::CalcConstantBufferByteSize(sizeof(PassConstBuffer));
 	auto CamPassConstBufferRes = GetCurrentFrameResource()->PassConstBufferRes.get();
-	auto CamPassBufferGpuAddress = CamPassConstBufferRes->GetResourceGpuAddress() + 1 * PassSize;
-	CommandList->SetGraphicsRootConstantBufferView(0, CamPassBufferGpuAddress);
+
+	ID3D12DescriptorHeap* DescHeap[] = { SrvDescriptorHeap.Get() };
+	CommandList->SetDescriptorHeaps(_countof(DescHeap), DescHeap);
+	CommandList->SetGraphicsRootSignature(RootSignature.Get());
+
+	auto DescHeapGpuAddress = SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	CommandList->SetGraphicsRootDescriptorTable(2, DescHeapGpuAddress);  // TexTable
+
 	CommandList->SetGraphicsRootDescriptorTable(4, NullSrvGpuHandle);
 
+	auto CamPassBufferGpuAddress = CamPassConstBufferRes->GetResourceGpuAddress() + 1 * PassSize;
+	CommandList->SetGraphicsRootConstantBufferView(0, CamPassBufferGpuAddress);
 	DrawSceneToShadowMap();
 
-	
+	//--------------------------
+	CommandList->SetPipelineState(PSO["Opaque"].Get());
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE ShadowSkyGpuHandle(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	ShadowSkyGpuHandle.Offset(ShadowSkyMapHeapIndex, CbvSrvUavDescriptorSize);
+	CommandList->SetGraphicsRootDescriptorTable(4, ShadowSkyGpuHandle);
+	DrawSceneToCubeMap();
+
 	auto Barier = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBufferResource(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 	CommandList->ResourceBarrier(1, &Barier);
 
 	CommandList->RSSetViewports(1, &Viewport);
 	CommandList->RSSetScissorRects(1, &ScissorRect);
 
-	CommandList->ClearRenderTargetView(CurrentBackBufferHeapDescHandle(), DirectX::Colors::BurlyWood, 0, nullptr);
+	CommandList->ClearRenderTargetView(CurrentBackBufferHeapDescHandle(), DirectX::Colors::Black, 0, nullptr);
 	CommandList->ClearDepthStencilView(GetDsvHeapCpuHandle(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
 		1, 0, 0, nullptr);
 
@@ -448,19 +622,23 @@ void ShapesApp::Draw(const GameTime& Gt)
 	auto PassBufferGpuAddress = PassConstBufferRes->GetResourceGpuAddress();
 	CommandList->SetGraphicsRootConstantBufferView(0, PassBufferGpuAddress);
 
-	CD3DX12_GPU_DESCRIPTOR_HANDLE ShadowSkyGpuHandle(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-	ShadowSkyGpuHandle.Offset(ShadowMapHeapIndex, CbvSrvUavDescriptorSize);
-	CommandList->SetGraphicsRootDescriptorTable(4, ShadowSkyGpuHandle);
-	
 	CommandList->SetPipelineState(PSO["Opaque"].Get());
 	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Opaque]);
-	
-	CommandList->SetPipelineState(PSO["ShadowDebug"].Get());
-	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::ShadowDebug]);
 
+	if (bDebugShadowMap)
+	{
+		CommandList->SetPipelineState(PSO["ShadowDebug"].Get());
+		DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::ShadowDebug]);
+	}
 	CommandList->SetPipelineState(PSO["Sky"].Get());
 	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Skybox]);
 
+	//Render the CubeMap Reflection
+	CommandList->SetPipelineState(PSO["Opaque"].Get());
+	CD3DX12_GPU_DESCRIPTOR_HANDLE CubeMap(SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+	CubeMap.Offset(ShadowCubeMapHeapIndex, CbvSrvUavDescriptorSize);
+	CommandList->SetGraphicsRootDescriptorTable(4, CubeMap);
+	DrawRenderItems(CommandList.Get(), RenderLayerItems[(UINT)RenderLayer::Reflection]);
 
 	auto Barier2 = CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBufferResource(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 	CommandList->ResourceBarrier(1, &Barier2);
@@ -479,8 +657,8 @@ void ShapesApp::Draw(const GameTime& Gt)
 
 void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<RenderItem*>& RenderItem)
 {
-	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get() ;
-	auto MatConstBufferRes = GetCurrentFrameResource()->MatConstBufferRes.get() ;
+	auto ObjConstBufferRes = GetCurrentFrameResource()->ObjConstBufferRes.get();
+	auto MatConstBufferRes = GetCurrentFrameResource()->MatConstBufferRes.get();
 
 	for (auto& RItem : RenderItem)
 	{
@@ -502,9 +680,9 @@ void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vec
 	}
 }
 
-FrameResource<ShapesApp::PassConstBuffer,ShapesApp::ObjConstBuffer,ShapesApp::MaterialConstBuffer>* ShapesApp::GetCurrentFrameResource() const
+FrameResource<ShapesApp::PassConstBuffer, ShapesApp::ObjConstBuffer, ShapesApp::MaterialConstBuffer>* ShapesApp::GetCurrentFrameResource() const
 {
-	assert((CurrentFrameResourceIndex>=0 && CurrentFrameResourceIndex < FrameResources.size()) && "Trying to get FrameRes REF with an invalid Index");
+	assert((CurrentFrameResourceIndex >= 0 && CurrentFrameResourceIndex < FrameResources.size()) && "Trying to get FrameRes REF with an invalid Index");
 	return FrameResources[CurrentFrameResourceIndex].get();
 }
 
@@ -512,24 +690,24 @@ void ShapesApp::BuildRootSignature()
 {
 	const size_t TotalRootParameters = 5;
 	CD3DX12_ROOT_PARAMETER RootParameter[TotalRootParameters];
-	RootParameter[0].InitAsConstantBufferView(0,0);
-	RootParameter[1].InitAsConstantBufferView(1,0);
+	RootParameter[0].InitAsConstantBufferView(0, 0);
+	RootParameter[1].InitAsConstantBufferView(1, 0);
 
 	CD3DX12_DESCRIPTOR_RANGE TextureDescTable;
 	TextureDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MAX_TEXTURES, 0, 0);		//Textures
-	RootParameter[2].InitAsDescriptorTable(1,&TextureDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
-	RootParameter[3].InitAsConstantBufferView(2,0, D3D12_SHADER_VISIBILITY_PIXEL);	//Material
+	RootParameter[2].InitAsDescriptorTable(1, &TextureDescTable, D3D12_SHADER_VISIBILITY_PIXEL);
+	RootParameter[3].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);	//Material
 
 	CD3DX12_DESCRIPTOR_RANGE ShadowSkyDescTable;
 	ShadowSkyDescTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 1);  // 2 SRVs at t0-t1 in space1
-	RootParameter[4].InitAsDescriptorTable(1,&ShadowSkyDescTable,D3D12_SHADER_VISIBILITY_PIXEL);
+	RootParameter[4].InitAsDescriptorTable(1, &ShadowSkyDescTable, D3D12_SHADER_VISIBILITY_PIXEL);
 
 
 	auto Samplers = d3dUtil::GetStaticSamplers();
 	CD3DX12_ROOT_SIGNATURE_DESC RootSignatureDesc(TotalRootParameters, RootParameter, static_cast<UINT>(Samplers.size()), Samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 	Microsoft::WRL::ComPtr<ID3DBlob> SignatureBlob;
 	Microsoft::WRL::ComPtr<ID3DBlob> ErrorBlob;
-	HRESULT HR = ( D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1 
+	HRESULT HR = (D3D12SerializeRootSignature(&RootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1
 		, SignatureBlob.GetAddressOf(), ErrorBlob.GetAddressOf()));
 	if (ErrorBlob != nullptr)
 	{
@@ -537,27 +715,27 @@ void ShapesApp::BuildRootSignature()
 	}
 	ThrowIfFailed(HR);
 
-	ThrowIfFailed( DxDevice3D->CreateRootSignature(0, SignatureBlob->GetBufferPointer(),
-		SignatureBlob->GetBufferSize(), IID_PPV_ARGS(RootSignature.GetAddressOf() )));
+	ThrowIfFailed(DxDevice3D->CreateRootSignature(0, SignatureBlob->GetBufferPointer(),
+		SignatureBlob->GetBufferSize(), IID_PPV_ARGS(RootSignature.GetAddressOf())));
 }
 
 void ShapesApp::BuildShadersAndInputLayout()
 {
 	InputLayouts.push_back(
-		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,
-			0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,
+			0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 });
 
 	InputLayouts.push_back(
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,
-			0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+			0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 });
 
 	InputLayouts.push_back(
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT,
-			0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+			0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 });
 
 	InputLayouts.push_back(
 		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT,
-			0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}	);
+			0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 });
 
 	Shaders["Vertex"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["Pixel"] = d3dUtil::CompileShader(L"src\\Shaders\\ShapesApp.hlsl", nullptr, "PS", "ps_5_1");
@@ -567,7 +745,7 @@ void ShapesApp::BuildShadersAndInputLayout()
 
 	Shaders["ShadowVS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMap.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["ShadowPS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMap.hlsl", nullptr, "PS", "ps_5_1");
-	
+
 	Shaders["ShadowDebugVS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMapDebug.hlsl", nullptr, "VS", "vs_5_1");
 	Shaders["ShadowDebugPS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMapDebug.hlsl", nullptr, "PS", "ps_5_1");
 }
@@ -577,7 +755,7 @@ void ShapesApp::BuildGeometryResource()
 	ModelImporter::ModelData smgModelData;
 	bool smgLoaded = ModelImporter::LoadModel(
 		"Assets\\Models\\SMG\\M24_R_Low_Poly_Version_fbx.fbx",
-		smgModelData,	true,   false,  false  );
+		smgModelData, true, false, false);
 
 	if (smgLoaded)
 	{
@@ -631,29 +809,29 @@ void ShapesApp::BuildGeometryResource()
 		-0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  0.0f, 0.0f, -1.0f,  -1.0f, 0.0f, 0.0f, // 6
 		 0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  -1.0f, 0.0f, 0.0f, // 7
 
-		// Top face (+Y) - tangent points right (+X)
-		-0.5f,  0.5f,  0.5f,  0.0f, 1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 8
-		 0.5f,  0.5f,  0.5f,  1.0f, 1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 9
-		 0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 10
-		-0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 11
+		 // Top face (+Y) - tangent points right (+X)
+		 -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 8
+		  0.5f,  0.5f,  0.5f,  1.0f, 1.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 9
+		  0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 10
+		 -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  0.0f, 1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  // 11
 
-		// Bottom face (-Y) - tangent points right (+X)
-		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 12
-		 0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 13
-		 0.5f, -0.5f,  0.5f,  1.0f, 0.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 14
-		-0.5f, -0.5f,  0.5f,  0.0f, 0.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 15
+		 // Bottom face (-Y) - tangent points right (+X)
+		 -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 12
+		  0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 13
+		  0.5f, -0.5f,  0.5f,  1.0f, 0.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 14
+		 -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,  0.0f, -1.0f, 0.0f,  1.0f, 0.0f, 0.0f, // 15
 
-		// Right face (+X) - tangent points back (-Z)
-		 0.5f, -0.5f,  0.5f,  0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 16
-		 0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 17
-		 0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 18
-		 0.5f,  0.5f,  0.5f,  0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 19
+		 // Right face (+X) - tangent points back (-Z)
+		  0.5f, -0.5f,  0.5f,  0.0f, 1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 16
+		  0.5f, -0.5f, -0.5f,  1.0f, 1.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 17
+		  0.5f,  0.5f, -0.5f,  1.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 18
+		  0.5f,  0.5f,  0.5f,  0.0f, 0.0f,  1.0f, 0.0f, 0.0f,  0.0f, 0.0f, -1.0f,  // 19
 
-		// Left face (-X) - tangent points forward (+Z)
-		-0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 20
-		-0.5f, -0.5f,  0.5f,  1.0f, 1.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 21
-		-0.5f,  0.5f,  0.5f,  1.0f, 0.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 22
-		-0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f  // 23
+		  // Left face (-X) - tangent points forward (+Z)
+		  -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 20
+		  -0.5f, -0.5f,  0.5f,  1.0f, 1.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 21
+		  -0.5f,  0.5f,  0.5f,  1.0f, 0.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f, // 22
+		  -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,  -1.0f, 0.0f, 0.0f,  0.0f, 0.0f, 1.0f  // 23
 	};
 	const std::vector<uint16_t> CubeIndices =
 	{
@@ -677,15 +855,15 @@ void ShapesApp::BuildGeometryResource()
 		20, 22, 23
 	};
 
-	CubeMeshGeo->VertexByteStride	   = 11 * sizeof(float);
+	CubeMeshGeo->VertexByteStride = 11 * sizeof(float);
 	CubeMeshGeo->VertexBufferByteSize = static_cast<UINT>(CubeVertices.size() * sizeof(float));
 	CubeMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)CubeVertices.data(), CubeMeshGeo->VertexBufferByteSize, CubeMeshGeo->VertexBufferUploader);
+		(void*)CubeVertices.data(), CubeMeshGeo->VertexBufferByteSize, CubeMeshGeo->VertexBufferUploader);
 
 	CubeMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
-	CubeMeshGeo->IndexBufferByteSize  = static_cast<UINT>(CubeIndices.size() * sizeof(uint16_t));
+	CubeMeshGeo->IndexBufferByteSize = static_cast<UINT>(CubeIndices.size() * sizeof(uint16_t));
 	CubeMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)CubeIndices.data(), CubeMeshGeo->IndexBufferByteSize, CubeMeshGeo->IndexBufferUploader);
+		(void*)CubeIndices.data(), CubeMeshGeo->IndexBufferByteSize, CubeMeshGeo->IndexBufferUploader);
 
 	SubmeshGeometry CubeMeshPartition;
 	CubeMeshPartition.BaseVertexLocation = 0;
@@ -710,15 +888,15 @@ void ShapesApp::BuildGeometryResource()
 		1, 2, 3
 	};
 
-	SurfaceMeshGeo->VertexByteStride	   = 11 * sizeof(float);
+	SurfaceMeshGeo->VertexByteStride = 11 * sizeof(float);
 	SurfaceMeshGeo->VertexBufferByteSize = static_cast<UINT>(SurfaceVertices.size() * sizeof(float));
 	SurfaceMeshGeo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)SurfaceVertices.data(), SurfaceMeshGeo->VertexBufferByteSize, SurfaceMeshGeo->VertexBufferUploader);
+		(void*)SurfaceVertices.data(), SurfaceMeshGeo->VertexBufferByteSize, SurfaceMeshGeo->VertexBufferUploader);
 
 	SurfaceMeshGeo->IndexFormat = DXGI_FORMAT_R16_UINT;
-	SurfaceMeshGeo->IndexBufferByteSize  = static_cast<UINT>(SurfaceIndices.size() * sizeof(uint16_t));
+	SurfaceMeshGeo->IndexBufferByteSize = static_cast<UINT>(SurfaceIndices.size() * sizeof(uint16_t));
 	SurfaceMeshGeo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(DxDevice3D.Get(), CommandList.Get(),
-									(void*)SurfaceIndices.data(), SurfaceMeshGeo->IndexBufferByteSize, SurfaceMeshGeo->IndexBufferUploader);
+		(void*)SurfaceIndices.data(), SurfaceMeshGeo->IndexBufferByteSize, SurfaceMeshGeo->IndexBufferUploader);
 
 	SubmeshGeometry SurfaceMeshPartition;
 	SurfaceMeshPartition.BaseVertexLocation = 0;
@@ -758,16 +936,15 @@ void ShapesApp::BuildRenderItems()
 		{
 			std::unique_ptr<RenderItem> smgRenderItem = std::make_unique<RenderItem>();
 			DirectX::XMStoreFloat4x4(&smgRenderItem->World,
-				DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *  
-				DirectX::XMMatrixRotationY(DirectX::XM_PI/2) *  
-				DirectX::XMMatrixRotationZ(DirectX::XM_PI/2) *
+				DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *
+				DirectX::XMMatrixRotationY(DirectX::XM_PI / 2) *
+				DirectX::XMMatrixRotationZ(DirectX::XM_PI / 2) *
 				DirectX::XMMatrixTranslation(0.0f, -1.5f, 0.0f)
 			);
 			smgRenderItem->ObjConstBufferIndex = objIndex++;
 			smgRenderItem->MeshGeometryRef = smgMeshGeo;
-			auto SmgMaterial = GetMaterialForTexture("Tex_M24R_C");
-			SmgMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_M24R_N");
-			smgRenderItem->MaterialRef = SmgMaterial;
+			smgRenderItem->MaterialRef = BuildMaterial("SMG","M24R_C","M24R_N",
+												1,.7f,.7f);
 			smgRenderItem->IndexCount = submesh.IndexCount;
 			smgRenderItem->IndexStartLocation = submesh.StartIndexLocation;
 			smgRenderItem->VertexStartLocation = submesh.BaseVertexLocation;
@@ -785,9 +962,8 @@ void ShapesApp::BuildRenderItems()
 			DebugQuadRI->World = MathHelper::Identity4x4();
 			DebugQuadRI->ObjConstBufferIndex = objIndex++;
 			DebugQuadRI->MeshGeometryRef = DebugQuadMeshGeo;
-			auto SmgMaterial = GetMaterialForTexture("Tex_tile");
-			SmgMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_tile_nmap");
-			DebugQuadRI->MaterialRef = SmgMaterial;
+			DebugQuadRI->MaterialRef = BuildMaterial("DepthDebugQuad", "tile", "tile_nmap",
+								1, .1f, .1f);
 			DebugQuadRI->IndexCount = submesh.IndexCount;
 			DebugQuadRI->IndexStartLocation = submesh.StartIndexLocation;
 			DebugQuadRI->VertexStartLocation = submesh.BaseVertexLocation;
@@ -797,52 +973,60 @@ void ShapesApp::BuildRenderItems()
 	}
 
 	std::unique_ptr<RenderItem> CubeMesh = std::make_unique<RenderItem>();
-	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, -1.5f, 0.0f));  // Move cube to the right
+	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, -1.5f, 2.0f));  // Move cube away from z=0
 	CubeMesh->ObjConstBufferIndex = objIndex++;
 	CubeMesh->MeshGeometryRef = MeshGeometries["Cube"].get();
-	auto CubeMeshMaterial = GetMaterialForTexture("Tex_bricks2");
-	CubeMeshMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_bricks2_nmap");
-	CubeMesh->MaterialRef = CubeMeshMaterial;
+	CubeMesh->MaterialRef = BuildMaterial("CubeMesh", "bricks2", "bricks2_nmap",
+							.5f, .2f, .2f);
 	CubeMesh->IndexCount = CubeMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	CubeMesh->IndexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	CubeMesh->VertexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
 	RenderLayerItems[(UINT)RenderLayer::Opaque].push_back(CubeMesh.get());
-	RenderItems.push_back( move(CubeMesh) );
-	
+	RenderItems.push_back(move(CubeMesh));
+
 	std::unique_ptr<RenderItem> SurfaceMesh = std::make_unique<RenderItem>();
-	DirectX::XMStoreFloat4x4(&SurfaceMesh->World, DirectX::XMMatrixScaling(10,10,1)
-		*DirectX::XMMatrixRotationX(DirectX::XM_PIDIV2)*DirectX::XMMatrixTranslation(0.0f,-2.0f,0.0f));
+	DirectX::XMStoreFloat4x4(&SurfaceMesh->World, DirectX::XMMatrixScaling(10, 10, 1)
+		* DirectX::XMMatrixRotationX(DirectX::XM_PIDIV2) * DirectX::XMMatrixTranslation(0.0f, -2.0f, 0.0f));
 	SurfaceMesh->ObjConstBufferIndex = objIndex++;
 	SurfaceMesh->MeshGeometryRef = MeshGeometries["Surface"].get();
-	auto SurfaceMaterial = GetMaterialForTexture("Tex_tile");
-	SurfaceMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_tile_nmap");
-	SurfaceMesh->MaterialRef = SurfaceMaterial;
+	SurfaceMesh->MaterialRef = BuildMaterial("SurfaceMesh", "tile", "tile_nmap",
+							1.0f, .6f, .5f);
 	SurfaceMesh->IndexCount = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	SurfaceMesh->IndexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	SurfaceMesh->VertexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
 	RenderLayerItems[(UINT)RenderLayer::Opaque].push_back(SurfaceMesh.get());
-	RenderItems.push_back( move(SurfaceMesh) );
+	RenderItems.push_back(move(SurfaceMesh));
 
 	std::unique_ptr<RenderItem> SkyBoxMesh = std::make_unique<RenderItem>();
 	DirectX::XMStoreFloat4x4(&SkyBoxMesh->World, DirectX::XMMatrixScaling(500, 500, 500));
 	SkyBoxMesh->ObjConstBufferIndex = objIndex++;
 	SkyBoxMesh->MeshGeometryRef = MeshGeometries["Skybox"].get();
-	auto SkyBoxMaterial = GetMaterialForTexture(SkyBox);
-	SkyBoxMaterial->NormalSrvHeapIndex = GetHeapIndexOfTexture("Tex_default_nmap");
-	SkyBoxMesh->MaterialRef = SkyBoxMaterial;
+	SkyBoxMesh->MaterialRef = BuildMaterial("Reflection", "white1x1","default_nmap",
+												.05f,.95f,.95f);
 	SkyBoxMesh->IndexCount = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	SkyBoxMesh->IndexStartLocation = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	SkyBoxMesh->VertexStartLocation = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
 	RenderLayerItems[(UINT)RenderLayer::Skybox].push_back(SkyBoxMesh.get());
 	RenderItems.push_back(move(SkyBoxMesh));
+
+	std::unique_ptr<RenderItem> ReflectionSphere = std::make_unique<RenderItem>();
+	DirectX::XMStoreFloat4x4(&ReflectionSphere->World, DirectX::XMMatrixScaling(.5f, .5f, .5f));
+	ReflectionSphere->ObjConstBufferIndex = objIndex++;
+	ReflectionSphere->MeshGeometryRef = MeshGeometries["Skybox"].get();
+	ReflectionSphere->MaterialRef = GetMaterial("Reflection");
+	ReflectionSphere->IndexCount = ReflectionSphere->MeshGeometryRef->DrawArgs["Base"].IndexCount;
+	ReflectionSphere->IndexStartLocation = ReflectionSphere->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
+	ReflectionSphere->VertexStartLocation = ReflectionSphere->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
+	RenderLayerItems[(UINT)RenderLayer::Reflection].push_back(ReflectionSphere.get());
+	RenderItems.push_back(move(ReflectionSphere));
 }
 
 void ShapesApp::BuildFrameResources()
 {
 	UINT RenderItemCount = static_cast<UINT>(RenderItems.size()); //Total Const Buffer Data we needed
-	UINT TotalPass = 2;
+	UINT TotalPass = 8; // MainPass(1) + ShadowPass(1) + CubeMapPass(6)
 	for (UINT i = 0; i < TotalFrameResources; i++)
-		FrameResources.push_back(std::make_unique<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>(DxDevice3D.Get(), TotalPass, RenderItemCount, RenderItemCount));
+		FrameResources.push_back(std::make_unique<FrameResource<PassConstBuffer, ObjConstBuffer, MaterialConstBuffer>>(DxDevice3D.Get(), TotalPass, RenderItemCount, RenderItemCount));
 }
 
 void ShapesApp::BuildDescriptorHeap()
@@ -855,7 +1039,7 @@ void ShapesApp::BuildDescriptorHeap()
 	HeapDesc.NumDescriptors = MAX_TEXTURES;
 	HeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 
-	ThrowIfFailed( DxDevice3D->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)) );
+	ThrowIfFailed(DxDevice3D->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&SrvDescriptorHeap)));
 }
 
 void ShapesApp::BuildPSO()
@@ -870,14 +1054,14 @@ void ShapesApp::BuildPSO()
 	OpaquePsoDesc.InputLayout = InputLayoutDesc;
 
 	OpaquePsoDesc.VS =
-	{	reinterpret_cast<BYTE*>(Shaders["Vertex"]->GetBufferPointer()),
-		Shaders["Vertex"]->GetBufferSize()	};
+	{ reinterpret_cast<BYTE*>(Shaders["Vertex"]->GetBufferPointer()),
+		Shaders["Vertex"]->GetBufferSize() };
 	OpaquePsoDesc.PS =
-	{	reinterpret_cast<BYTE*>(Shaders["Pixel"]->GetBufferPointer()),
-		Shaders["Pixel"]->GetBufferSize()	};
+	{ reinterpret_cast<BYTE*>(Shaders["Pixel"]->GetBufferPointer()),
+		Shaders["Pixel"]->GetBufferSize() };
 
-	OpaquePsoDesc.RasterizerState          = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	OpaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID  ;
+	OpaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	OpaquePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 
 	OpaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	OpaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
@@ -891,9 +1075,9 @@ void ShapesApp::BuildPSO()
 	OpaquePsoDesc.SampleDesc.Quality = 0;
 	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&OpaquePsoDesc, IID_PPV_ARGS(&PSO["Opaque"])));
 
-//
- // PSO for shadow map pass.
- //
+	//
+	 // PSO for shadow map pass.
+	 //
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC smapPsoDesc = OpaquePsoDesc;
 	smapPsoDesc.RasterizerState.DepthBias = 1000;
 	smapPsoDesc.RasterizerState.DepthBiasClamp = 0.0f;

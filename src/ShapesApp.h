@@ -6,6 +6,7 @@
 #include <optional>
 #include <climits>
 #include "Base/ShadowMap.h"
+#include "Base/CubeMapRt.h"
 #include "Base/Camera.h"
 
 // Maximum number of textures that can be bound at once
@@ -16,7 +17,8 @@ enum class RenderLayer
 	Opaque = 0,
 	Skybox = 1,
 	ShadowDebug = 2,
-	Count = 3
+	Reflection = 3,
+	Count = 4
 };
 
 class ShapesApp : public DxRenderBase
@@ -32,6 +34,7 @@ public:
 	virtual void Update(const GameTime& Gt) override;
 	virtual void Draw(const GameTime& Gt) override;
 	virtual void OnResize() override;
+	virtual void CreateRtvDsvHeap() override;
 
 	void ProcessKeyboardInput(float DeltaTime);
 	virtual void OnMouseDown(WPARAM BtnState, int X, int Y) override;
@@ -55,14 +58,16 @@ private:
 	void UpdateConstBuffers();
 	void DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vector<RenderItem*>& RenderItem);
 	void DrawSceneToShadowMap();
+	void DrawSceneToCubeMap();
 
 	void InitCamera();
+	void InitCubeMapCameras(float CenterX , float CenterY, float CenterZ);
 	void BuildTextures();
 	void BuildDescriptors();
-	void BuildMaterials();
-	Material* GetMaterialForTexture(std::string TexName);
+	Material* BuildMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
+		float aDiffuseAlbedo = 1, float aFresnalRO = .5f, float aShininess = .5f);
+	Material* GetMaterial(std::string aMaterialName);
 
-	UINT GetHeapIndexOfTexture(std::string TexName);
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
 	std::vector<D3D12_INPUT_ELEMENT_DESC> InputLayouts;
@@ -78,16 +83,22 @@ private:
 	std::vector<std::unique_ptr<FrameResource<PassConstBuffer,ObjConstBuffer,MaterialConstBuffer>>> FrameResources;
 	std::vector<std::unique_ptr<RenderItem>> RenderItems;
 	std::vector<RenderItem*> RenderLayerItems[(int)RenderLayer::Count];
-	std::vector<Texture*> DiffTexture2DCaches;
+	std::vector<Texture*> Texture2DStack;
 	std::string SkyBox = "Tex_sunsetcube1024";
 
 
 	UINT TotalFrameResources = 3;
-	UINT ShadowMapHeapIndex;
+	UINT ShadowSkyMapHeapIndex;
+	UINT ShadowCubeMapHeapIndex;
+	UINT SrvCubeMapHeapIndex;
+
 	UINT CurrentFrameResourceIndex{UINT_MAX};
 	POINT MouseLastPos;
+	bool bDebugShadowMap=false;
 	std::unique_ptr<Camera> ViewCamera;
+	std::unique_ptr<Camera> CubeMapCameras[6];
 	std::unique_ptr<ShadowMap> ShadowMapObj;
+	std::unique_ptr<CubeMapRT> CubeMapObj;
 	CD3DX12_GPU_DESCRIPTOR_HANDLE NullSrvGpuHandle;
 	CD3DX12_GPU_DESCRIPTOR_HANDLE ShadowMapSrvGpuHandle;
 	DirectX::BoundingSphere SceneSphereBound;

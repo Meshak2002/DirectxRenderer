@@ -265,7 +265,7 @@ struct Material
 	// Material constant buffer data used for shading.
 	DirectX::XMFLOAT4 DiffuseAlbedo = { 1.0f, 1.0f, 1.0f, 1.0f };
 	DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
-	float Roughness = .25f;
+	float Shininess = .25f;
 	DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
 };
 
@@ -279,7 +279,9 @@ struct Texture
 	Microsoft::WRL::ComPtr<ID3D12Resource> Resource = nullptr;
 	Microsoft::WRL::ComPtr<ID3D12Resource> UploadHeap = nullptr;
 	UINT DescriptorHeapIndex=-1;
-    bool bIsDiffusedTexture = true;
+    bool bIsDiffusedTexture = false;
+    bool bIsCubeTexture = false;
+    bool bIsNormal = false;
 };
 
 #ifndef ThrowIfFailed

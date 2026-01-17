@@ -358,13 +358,13 @@ void DxRenderBase::CreateSwapChain()
 void DxRenderBase::CreateRtvDsvHeap()
 {
 	D3D12_DESCRIPTOR_HEAP_DESC RtvHeapDesc;
-	RtvHeapDesc.NumDescriptors = 2;
+	RtvHeapDesc.NumDescriptors = SwapChainBuffferCount;
 	RtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	RtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	RtvHeapDesc.NodeMask = 0;
 	ThrowIfFailed(DxDevice3D->CreateDescriptorHeap(&RtvHeapDesc, IID_PPV_ARGS(&RtvHeap)));
 	D3D12_DESCRIPTOR_HEAP_DESC DsvHeapDesc;
-	DsvHeapDesc.NumDescriptors = 2;  // Main depth buffer + shadow map
+	DsvHeapDesc.NumDescriptors = 1;  // Main depth buffer 
 	DsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
 	DsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	DsvHeapDesc.NodeMask = 0;
@@ -400,6 +400,11 @@ D3D12_CPU_DESCRIPTOR_HANDLE DxRenderBase::CurrentBackBufferHeapDescHandle() cons
 D3D12_CPU_DESCRIPTOR_HANDLE DxRenderBase::GetDsvHeapCpuHandle() const
 {
 	return DsvHeap->GetCPUDescriptorHandleForHeapStart();
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE DxRenderBase::GetRtvHeapCpuHandle() const
+{
+	return RtvHeap->GetCPUDescriptorHandleForHeapStart();
 }
 
 ID3D12Resource* DxRenderBase::CurrentBackBufferResource() const
