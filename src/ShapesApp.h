@@ -60,13 +60,21 @@ private:
 	void DrawSceneToShadowMap();
 	void DrawSceneToCubeMap();
 
+	void Pick(int X, int Y);
+	void MovePickedObj(float X, float Y, float Z , bool bInLocalSpace=true);
+	void RotatePickedObj(float Pitch, float Yaw, float Roll);
 	void InitCamera();
 	void InitCubeMapCameras(float CenterX , float CenterY, float CenterZ);
 	void BuildTextures();
 	void BuildDescriptors();
 	Material* BuildMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
-		float aDiffuseAlbedo = 1, float aFresnalRO = .5f, float aShininess = .5f);
+		float aDiffuseAlbedo = 1, float aFresnalRO = .5f, float aShininess = .5f, float aUvTileValue = 1.0f);
 	Material* GetMaterial(std::string aMaterialName);
+	Texture* GetTexture(std::string aTextureName);
+	bool AddTexture(std::unique_ptr<Texture> aTexture);
+	void SaveRenderItemsData();
+	void LoadRenderItemsData();
+	RenderItem* AddRenderItem(std::unique_ptr<RenderItem> aRenderItem, RenderLayer aLayer);
 
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;
@@ -85,7 +93,7 @@ private:
 	std::vector<RenderItem*> RenderLayerItems[(int)RenderLayer::Count];
 	std::vector<Texture*> Texture2DStack;
 	std::string SkyBox = "Tex_sunsetcube1024";
-
+	RenderItem* PickedRenderItem = nullptr;
 
 	UINT TotalFrameResources = 3;
 	UINT ShadowSkyMapHeapIndex;
@@ -95,6 +103,7 @@ private:
 	UINT CurrentFrameResourceIndex{UINT_MAX};
 	POINT MouseLastPos;
 	bool bDebugShadowMap=false;
+	bool bLeftMouseDown=false;
 	std::unique_ptr<Camera> ViewCamera;
 	std::unique_ptr<Camera> CubeMapCameras[6];
 	std::unique_ptr<ShadowMap> ShadowMapObj;
@@ -116,10 +125,12 @@ protected:
 struct ShapesApp::RenderItem
 {
 	RenderItem() = default;
+	std::string Name;
 	DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();
 	UINT ObjConstBufferIndex = -1;
 	MeshGeometry* MeshGeometryRef;
 	Material* MaterialRef;
+	DirectX::BoundingBox Bounds;
 
 	//For Multiple Objects on Same MeshGeometryData
 	UINT IndexCount;
@@ -147,8 +158,9 @@ struct ShapesApp::MaterialConstBuffer
 {
 	DirectX::XMFLOAT4 DiffuseAlbedo;
 	DirectX::XMFLOAT3 FresnelRO;
-	float Shinnines;
-
+	float Shininess;
+	float UvTileValue = 1.0f;  // Changed to float for fractional tiling
 	UINT DiffuseTexIndex;
 	UINT NormalTexIndex;
+	UINT Padding;  // Pad to 16-byte alignment (48 bytes total)
 };

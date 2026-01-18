@@ -197,27 +197,34 @@
     <None Include="src\Shaders\ShapesApp.hlsl" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="Assets\Textures\CubeMap\desertcube1024.dds" />
-    <Image Include="Assets\Textures\CubeMap\grasscube1024.dds" />
-    <Image Include="Assets\Textures\CubeMap\snowcube1024.dds" />
-    <Image Include="Assets\Textures\CubeMap\sunsetcube1024.dds" />
-    <Image Include="Assets\Textures\Diffuse\bricks.dds" />
-    <Image Include="Assets\Textures\Diffuse\bricks2.dds" />
-    <Image Include="Assets\Textures\Diffuse\bricks3.dds" />
-    <Image Include="Assets\Textures\Diffuse\checkboard.dds" />
-    <Image Include="Assets\Textures\Diffuse\grass.dds" />
-    <Image Include="Assets\Textures\Diffuse\ice.dds" />
-    <Image Include="Assets\Textures\Diffuse\stone.dds" />
-    <Image Include="Assets\Textures\Diffuse\tile.dds" />
-    <Image Include="Assets\Textures\Diffuse\water1.dds" />
-    <Image Include="Assets\Textures\Diffuse\white1x1.dds" />
-    <Image Include="Assets\Textures\Diffuse\WoodCrate01.dds" />
-    <Image Include="Assets\Textures\Diffuse\WoodCrate02.dds" />
-    <Image Include="Assets\Textures\Normals\bricks2_nmap.dds" />
-    <Image Include="Assets\Textures\Normals\bricks_nmap.dds" />
-    <Image Include="Assets\Textures\Normals\default_nmap.dds" />
-    <Image Include="Assets\Textures\Normals\head_norm.dds" />
-    <Image Include="Assets\Textures\Normals\tile_nmap.dds" />
+    <Image Include="Assets\DDS\bricks.dds" />
+    <Image Include="Assets\DDS\bricks2.dds" />
+    <Image Include="Assets\DDS\bricks2_nmap.dds" />
+    <Image Include="Assets\DDS\bricks3.dds" />
+    <Image Include="Assets\DDS\bricks_nmap.dds" />
+    <Image Include="Assets\DDS\checkboard.dds" />
+    <Image Include="Assets\DDS\default_nmap.dds" />
+    <Image Include="Assets\DDS\desertcube1024.dds" />
+    <Image Include="Assets\DDS\glanz .dds" />
+    <Image Include="Assets\DDS\glanz.dds" />
+    <Image Include="Assets\DDS\grass.dds" />
+    <Image Include="Assets\DDS\grasscube1024.dds" />
+    <Image Include="Assets\DDS\head_norm.dds" />
+    <Image Include="Assets\DDS\ice.dds" />
+    <Image Include="Assets\DDS\M24R_C.dds" />
+    <Image Include="Assets\DDS\M24R_N.dds" />
+    <Image Include="Assets\DDS\M24R_S.dds" />
+    <Image Include="Assets\DDS\Poliigon_MetalGoldPaint_7253_BaseColor.dds" />
+    <Image Include="Assets\DDS\Poliigon_MetalGoldPaint_7253_Normal.dds" />
+    <Image Include="Assets\DDS\snowcube1024.dds" />
+    <Image Include="Assets\DDS\stone.dds" />
+    <Image Include="Assets\DDS\sunsetcube1024.dds" />
+    <Image Include="Assets\DDS\tile.dds" />
+    <Image Include="Assets\DDS\tile_nmap.dds" />
+    <Image Include="Assets\DDS\water1.dds" />
+    <Image Include="Assets\DDS\white1x1.dds" />
+    <Image Include="Assets\DDS\WoodCrate01.dds" />
+    <Image Include="Assets\DDS\WoodCrate02.dds" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\Shaders\LightingUtil.hlsl" />

@@ -1,0 +1,27 @@
+
+===== AUTO-CONVERTING MODEL TEXTURES =====
+
+Converting: Assets\Models\SMG\textures\glanz .jpg
+  ERROR: Output file already exists (overwrite disabled): Assets\DDS\glanz .dds
+
+Converting: Assets\Models\SMG\textures\M24R_C.jpg
+  ERROR: Output file already exists (overwrite disabled): Assets\DDS\M24R_C.dds
+
+Converting: Assets\Models\SMG\textures\M24R_N.jpg
+  ERROR: Output file already exists (overwrite disabled): Assets\DDS\M24R_N.dds
+
+Converting: Assets\Models\SMG\textures\M24R_S.jpg
+  ERROR: Output file already exists (overwrite disabled): Assets\DDS\M24R_S.dds
+
+Converting: Assets\Textures\Diffuse\Poliigon_MetalGoldPaint_7253_BaseColor.jpg
+  ERROR: Output file already exists (overwrite disabled): Assets\DDS\Poliigon_MetalGoldPaint_7253_BaseColor.dds
+
+Converting: Assets\Textures\Normals\Poliigon_MetalGoldPaint_7253_Normal.png
+  ERROR: Output file already exists (overwrite disabled): Assets\DDS\Poliigon_MetalGoldPaint_7253_Normal.dds
+✓ Converted 0 / 6 textures
+===== CONVERSION COMPLETE =====
+Model loaded successfully: Assets\Models\SMG\M24_R_Low_Poly_Version_fbx.fbx
+  Vertices: 3070
+  Indices: 6933
+  Submeshes: 1
+  Materials: 1

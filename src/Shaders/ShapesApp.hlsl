@@ -38,8 +38,8 @@ float4 PS(VertexOut VOutput)    : SV_TARGET
 {
     float4 ambientLight = float4(0.1f, 0.1f, 0.1f, 1.0f);
     float4 mDiffuseAlbedo = DiffuseAlbedo;
-    mDiffuseAlbedo *= gTextureMaps[DiffuseTexIndex].Sample(gsamAnisotropicWrap, VOutput.texCoord);
-    float4 NormalMapCoord = gTextureMaps[NormalTexIndex].Sample(gsamAnisotropicWrap, VOutput.texCoord);
+    mDiffuseAlbedo *= gTextureMaps[DiffuseTexIndex].Sample(gsamAnisotropicWrap, (VOutput.texCoord*UvTileValue));
+    float4 NormalMapCoord = gTextureMaps[NormalTexIndex].Sample(gsamAnisotropicWrap, (VOutput.texCoord*UvTileValue));
     
     float3 NormalW = normalize(VOutput.normalW);
     float3 BumpedNormalWPos = NormalSampleToWorldPos(NormalMapCoord.rgb, NormalW, VOutput.tangentW);

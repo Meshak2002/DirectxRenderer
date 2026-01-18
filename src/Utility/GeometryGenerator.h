@@ -16,42 +16,17 @@
 
 #include <cstdint>
 #include <DirectXMath.h>
+#include <DirectXCollision.h>
 #include <vector>
+#include "Vertex.h"  // Includes global Vertex, uint16, uint32 definitions
 
 class GeometryGenerator
 {
 public:
 
-    using uint16 = std::uint16_t;
-    using uint32 = std::uint32_t;
-
-	struct Vertex
-	{
-		Vertex(){}
-        Vertex(
-            const DirectX::XMFLOAT3& p,
-            const DirectX::XMFLOAT2& uv,
-            const DirectX::XMFLOAT3& n,
-            const DirectX::XMFLOAT3& t) :
-            Position(p),
-            TexCoord(uv),
-            Normal(n),
-            Tangent(t){}
-		Vertex(
-			float px, float py, float pz,
-			float u, float v,
-			float nx, float ny, float nz,
-			float tx, float ty, float tz) :
-            Position(px,py,pz),
-            TexCoord(u,v),
-            Normal(nx,ny,nz),
-			Tangent(tx, ty, tz){}
-
-        DirectX::XMFLOAT3 Position;
-        DirectX::XMFLOAT2 TexCoord;
-        DirectX::XMFLOAT3 Normal;
-        DirectX::XMFLOAT3 Tangent;
-	};
+    // Using global types from Vertex.h (Vertex, uint16, uint32)
+    using uint16 = ::uint16;
+    using uint32 = ::uint32;
 
 	struct MeshData
 	{
@@ -109,6 +84,12 @@ public:
 	/// Creates a quad aligned with the screen.  This is useful for postprocessing and screen effects.
 	///</summary>
     MeshData CreateQuad(float x, float y, float w, float h, float depth);
+
+	///<summary>
+	/// Calculates the axis-aligned bounding box (AABB) for a given set of vertices.
+	/// Returns a DirectX::BoundingBox with Center and Extents computed from min/max bounds.
+	///</summary>
+	static DirectX::BoundingBox CalculateBounds(const std::vector<Vertex>& vertices);
 
 private:
 	void Subdivide(MeshData& meshData);

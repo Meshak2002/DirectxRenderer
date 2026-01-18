@@ -4,6 +4,7 @@
 
 #include "GeometryGenerator.h"
 #include <algorithm>
+#include <DirectXCollision.h>
 
 using namespace DirectX;
 
@@ -274,7 +275,7 @@ void GeometryGenerator::Subdivide(MeshData& meshData)
 	}
 }
 
-GeometryGenerator::Vertex GeometryGenerator::MidPoint(const Vertex& v0, const Vertex& v1)
+Vertex GeometryGenerator::MidPoint(const Vertex& v0, const Vertex& v1)
 {
     XMVECTOR p0 = XMLoadFloat3(&v0.Position);
     XMVECTOR p1 = XMLoadFloat3(&v1.Position);
@@ -654,4 +655,32 @@ GeometryGenerator::MeshData GeometryGenerator::CreateQuad(float x, float y, floa
 	meshData.Indices32[5] = 3;
 
     return meshData;
+}
+
+DirectX::BoundingBox GeometryGenerator::CalculateBounds(const std::vector<Vertex>& vertices)
+{
+	if (vertices.empty())
+	{
+		return DirectX::BoundingBox(XMFLOAT3(0.0f, 0.0f, 0.0f), XMFLOAT3(0.0f, 0.0f, 0.0f));
+	}
+
+	XMVECTOR minBounds = XMLoadFloat3(&vertices[0].Position);
+	XMVECTOR maxBounds = minBounds;
+
+	for (size_t i = 1; i < vertices.size(); ++i)
+	{
+		XMVECTOR pos = XMLoadFloat3(&vertices[i].Position);
+		minBounds = XMVectorMin(minBounds, pos);
+		maxBounds = XMVectorMax(maxBounds, pos);
+	}
+
+	XMVECTOR center = XMVectorScale(XMVectorAdd(minBounds, maxBounds), 0.5f);
+	XMVECTOR extents = XMVectorScale(XMVectorSubtract(maxBounds, minBounds), 0.5f);
+
+	XMFLOAT3 centerFloat;
+	XMFLOAT3 extentsFloat;
+	XMStoreFloat3(&centerFloat, center);
+	XMStoreFloat3(&extentsFloat, extents);
+
+	return DirectX::BoundingBox(centerFloat, extentsFloat);
 }

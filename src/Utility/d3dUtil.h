@@ -267,6 +267,7 @@ struct Material
 	DirectX::XMFLOAT3 FresnelR0 = { 0.01f, 0.01f, 0.01f };
 	float Shininess = .25f;
 	DirectX::XMFLOAT4X4 MatTransform = MathHelper::Identity4x4();
+	float UvTileValue = 1.0f;  // Changed to float for fractional tiling (0.5x, 2.5x, etc.)
 };
 
 struct Texture

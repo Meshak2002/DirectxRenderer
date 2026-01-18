@@ -46,8 +46,10 @@ cbuffer MaterialData : register(b2)
     float4 DiffuseAlbedo;
     float3 FresnelR0;
     float Shininess;
+    float UvTileValue;  // Changed to float for fractional tiling
     uint DiffuseTexIndex;
     uint NormalTexIndex;
+    uint Padding1;  // Match C++ struct padding
 }
 
 

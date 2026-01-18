@@ -7,6 +7,7 @@
 #include "ModelImporter.h"
 #include <filesystem>
 #include <iostream>
+#include <DirectXCollision.h>
 
 namespace ModelImporter
 {
@@ -266,6 +267,50 @@ namespace ModelImporter
         return mat;
     }
 
+    DirectX::BoundingBox CalculateBoundsForSubmesh(
+        const std::vector<Vertex>& vertices,
+        UINT baseVertexLocation,
+        UINT indexCount,
+        const std::vector<uint16_t>& indices16,
+        const std::vector<uint32_t>& indices32,
+        UINT startIndexLocation,
+        bool use32BitIndices)
+    {
+        using namespace DirectX;
+
+        if (vertices.empty())
+        {
+            return BoundingBox(XMFLOAT3(0.0f, 0.0f, 0.0f), XMFLOAT3(0.0f, 0.0f, 0.0f));
+        }
+
+        // Get the first vertex position for this submesh
+        UINT firstIndex = use32BitIndices ? indices32[startIndexLocation] : indices16[startIndexLocation];
+        XMVECTOR minBounds = XMLoadFloat3(&vertices[firstIndex].Position);
+        XMVECTOR maxBounds = minBounds;
+
+        // Iterate through all indices for this submesh
+        for (UINT i = 0; i < indexCount; ++i)
+        {
+            UINT vertexIndex = use32BitIndices ?
+                indices32[startIndexLocation + i] :
+                indices16[startIndexLocation + i];
+
+            XMVECTOR pos = XMLoadFloat3(&vertices[vertexIndex].Position);
+            minBounds = XMVectorMin(minBounds, pos);
+            maxBounds = XMVectorMax(maxBounds, pos);
+        }
+
+        XMVECTOR center = XMVectorScale(XMVectorAdd(minBounds, maxBounds), 0.5f);
+        XMVECTOR extents = XMVectorScale(XMVectorSubtract(maxBounds, minBounds), 0.5f);
+
+        XMFLOAT3 centerFloat;
+        XMFLOAT3 extentsFloat;
+        XMStoreFloat3(&centerFloat, center);
+        XMStoreFloat3(&extentsFloat, extents);
+
+        return BoundingBox(centerFloat, extentsFloat);
+    }
+
     std::unique_ptr<MeshGeometry> CreateMeshGeometry(
         const ModelData& modelData,
         ID3D12Device* device,
@@ -304,6 +349,10 @@ namespace ModelImporter
         // Set vertex buffer properties
         meshGeometry->VertexByteStride = 11 * sizeof(float);
         meshGeometry->VertexBufferByteSize = static_cast<UINT>(vertexData.size() * sizeof(float));
+
+        ThrowIfFailed(D3DCreateBlob(meshGeometry->VertexBufferByteSize, &meshGeometry->VertexBufferCPU));
+        memcpy(meshGeometry->VertexBufferCPU->GetBufferPointer(), vertexData.data(), meshGeometry->VertexBufferByteSize);
+
         meshGeometry->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(
             device, cmdList,
             vertexData.data(),
@@ -315,6 +364,10 @@ namespace ModelImporter
         {
             meshGeometry->IndexFormat = DXGI_FORMAT_R32_UINT;
             meshGeometry->IndexBufferByteSize = static_cast<UINT>(modelData.Indices32.size() * sizeof(uint32_t));
+
+            ThrowIfFailed(D3DCreateBlob(meshGeometry->IndexBufferByteSize, &meshGeometry->IndexBufferCPU));
+            memcpy(meshGeometry->IndexBufferCPU->GetBufferPointer(), modelData.Indices32.data(), meshGeometry->IndexBufferByteSize);
+
             meshGeometry->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(
                 device, cmdList,
                 modelData.Indices32.data(),
@@ -325,6 +378,10 @@ namespace ModelImporter
         {
             meshGeometry->IndexFormat = DXGI_FORMAT_R16_UINT;
             meshGeometry->IndexBufferByteSize = static_cast<UINT>(modelData.Indices16.size() * sizeof(uint16_t));
+
+            ThrowIfFailed(D3DCreateBlob(meshGeometry->IndexBufferByteSize, &meshGeometry->IndexBufferCPU));
+            memcpy(meshGeometry->IndexBufferCPU->GetBufferPointer(), modelData.Indices16.data(), meshGeometry->IndexBufferByteSize);
+
             meshGeometry->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(
                 device, cmdList,
                 modelData.Indices16.data(),
@@ -342,6 +399,17 @@ namespace ModelImporter
                 static_cast<UINT>(modelData.Indices16.size());
             submesh.StartIndexLocation = 0;
             submesh.BaseVertexLocation = 0;
+
+            // Calculate bounds for the entire mesh
+            submesh.Bounds = CalculateBoundsForSubmesh(
+                modelData.Vertices,
+                submesh.BaseVertexLocation,
+                submesh.IndexCount,
+                modelData.Indices16,
+                modelData.Indices32,
+                submesh.StartIndexLocation,
+                modelData.Use32BitIndices);
+
             meshGeometry->DrawArgs["Default"] = submesh;
         }
         else
@@ -353,6 +421,16 @@ namespace ModelImporter
                 submesh.IndexCount = sub.IndexCount;
                 submesh.StartIndexLocation = sub.StartIndexLocation;
                 submesh.BaseVertexLocation = sub.BaseVertexLocation;
+
+                // Calculate bounds for this submesh
+                submesh.Bounds = CalculateBoundsForSubmesh(
+                    modelData.Vertices,
+                    submesh.BaseVertexLocation,
+                    submesh.IndexCount,
+                    modelData.Indices16,
+                    modelData.Indices32,
+                    submesh.StartIndexLocation,
+                    modelData.Use32BitIndices);
 
                 std::string submeshName = sub.Name.empty() ? ("Submesh_" + std::to_string(meshGeometry->DrawArgs.size())) : sub.Name;
                 meshGeometry->DrawArgs[submeshName] = submesh;

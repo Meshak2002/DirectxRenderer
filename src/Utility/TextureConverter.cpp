@@ -477,9 +477,9 @@ namespace TextureConverter
         std::string ext = std::filesystem::path(filename).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
+        // Skip .dds files since they are already in the target format
         return ext == ".jpg" || ext == ".jpeg" || ext == ".png" ||
-            ext == ".tga" || ext == ".bmp" || ext == ".hdr" ||
-            ext == ".dds";
+            ext == ".tga" || ext == ".bmp" || ext == ".hdr";
     }
 
     // ===== HELPER: Format to string =====

@@ -12,6 +12,7 @@
 #endif
 
 #include "d3dUtil.h"
+#include "Vertex.h"  // Use global Vertex definition
 #include <assimp/cimport.h>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -27,27 +28,8 @@ namespace ModelImporter
     {
         aiDetachAllLogStreams();
     }
-    // Vertex structure matching the current shader input layout
-    // Position (3) + TexCoord (2) + Normal (3) + Tangent (3) = 11 floats
-    struct Vertex
-    {
-        DirectX::XMFLOAT3 Position;
-        DirectX::XMFLOAT2 TexCoord;
-        DirectX::XMFLOAT3 Normal;
-        DirectX::XMFLOAT3 Tangent;
 
-        Vertex()
-            : Position(0.0f, 0.0f, 0.0f)
-            , TexCoord(0.0f, 0.0f)
-            , Normal(0.0f, 1.0f, 0.0f)
-            , Tangent(1.0f, 0.0f, 0.0f)
-        {}
-
-        Vertex(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT2& tex,
-               const DirectX::XMFLOAT3& norm, const DirectX::XMFLOAT3& tan)
-            : Position(pos), TexCoord(tex), Normal(norm), Tangent(tan)
-        {}
-    };
+    // Using global Vertex definition from Vertex.h
 
     // Material information extracted from model
     struct ModelMaterial
