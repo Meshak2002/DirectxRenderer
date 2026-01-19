@@ -40,7 +40,7 @@ void ConvertToDDsTexturesOnStartup()
 	std::cout << "===== CONVERSION COMPLETE =====" << std::endl;
 }
 
-ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance), SkyBox{ "Tex_sunsetcube1024" }
+ShapesApp::ShapesApp(HINSTANCE ScreenInstance) : DxRenderBase(ScreenInstance), SkyBox{ "Tex_snowcube1024" }
 , bDebugShadowMap{ false }
 {
 	ViewCamera = std::make_unique<Camera>();
@@ -59,9 +59,10 @@ ShapesApp::~ShapesApp()
 
 void ShapesApp::ProcessKeyboardInput(float DeltaTime)
 {
-	float CamMovementSpeed = 6 * DeltaTime;
-	float ObjDragSpeed = 2 * DeltaTime;
-	float ObjRotateSpeed = 2 * DeltaTime;
+	float CamMovementSpeed = 3 * DeltaTime;
+	float ObjDragSpeed = 1 * DeltaTime;
+	float ObjRotateSpeed = 1 * DeltaTime;
+	float ObjScaleSpeed = 1.0f + (2.0f * DeltaTime);  
 
 	if (bLeftMouseDown && PickedRenderItem)
 	{
@@ -90,6 +91,18 @@ void ShapesApp::ProcessKeyboardInput(float DeltaTime)
 			RotatePickedObj(0, 0, -ObjRotateSpeed);
 		if (GetAsyncKeyState('X') & 0x8000)
 			RotatePickedObj(0, 0, ObjRotateSpeed);
+
+		// Scaling controls: T (X-axis), G (Y-axis), B (Z-axis)
+		// Hold Shift for scaling down
+		bool bShiftDown = GetAsyncKeyState(VK_SHIFT) & 0x8000;
+		float ScaleFactor = bShiftDown ? (1.0f / ObjScaleSpeed) : ObjScaleSpeed;
+
+		if (GetAsyncKeyState('T') & 0x8000)
+			ScalePickedObj(ScaleFactor, 1.0f, 1.0f);
+		if (GetAsyncKeyState('G') & 0x8000)
+			ScalePickedObj(1.0f, ScaleFactor, 1.0f);
+		if (GetAsyncKeyState('B') & 0x8000)
+			ScalePickedObj(1.0f, 1.0f, ScaleFactor);
 	}
 	else
 	{
@@ -168,8 +181,15 @@ void ShapesApp::Pick(int X, int Y)
 	DirectX::XMVECTOR ViewDet = DirectX::XMMatrixDeterminant(View);
 	auto InvView = DirectX::XMMatrixInverse(&ViewDet, View);
 
-	auto OpaqRenderItems = RenderLayerItems[(int)RenderLayer::Opaque];
-	for (auto RenderItem : OpaqRenderItems)
+	auto& OpaqRItems = RenderLayerItems[(int)RenderLayer::Opaque];
+	auto& RefRItems = RenderLayerItems[(int)RenderLayer::Reflection];
+	std::vector<RenderItem*> AllowedRenderItems;
+
+	AllowedRenderItems.reserve(OpaqRItems.size() + RefRItems.size() );
+	AllowedRenderItems.insert(AllowedRenderItems.begin(), OpaqRItems.begin(), OpaqRItems.end());
+	AllowedRenderItems.insert(AllowedRenderItems.begin(), RefRItems.begin(), RefRItems.end());
+
+	for (auto RenderItem : AllowedRenderItems)
 	{
 		auto World4x4 = RenderItem->World;
 		auto World = DirectX::XMLoadFloat4x4(&World4x4);
@@ -244,6 +264,30 @@ void ShapesApp::RotatePickedObj(float Pitch, float Yaw, float Roll)
 	Rotation = DirectX::XMMatrixRotationRollPitchYaw(Pitch, Yaw, Roll);
 	Result = DirectX::XMMatrixMultiply(RiWorldTransform, Rotation);
 	Result.r[3] = CachedPosition;
+
+	DirectX::XMStoreFloat4x4(&PickedRenderItem->World, Result);
+}
+
+void ShapesApp::ScalePickedObj(float ScaleX, float ScaleY, float ScaleZ)
+{
+	if (!PickedRenderItem)	return;
+
+	auto RiWorldTransform = DirectX::XMLoadFloat4x4(&PickedRenderItem->World);
+
+	// Decompose the current world matrix into scale, rotation, and translation
+	DirectX::XMVECTOR currentScale;
+	DirectX::XMVECTOR currentRotation;
+	DirectX::XMVECTOR currentTranslation;
+
+	DirectX::XMMatrixDecompose(&currentScale, &currentRotation, &currentTranslation, RiWorldTransform);
+
+	// Multiply the current scale by the new scale factors
+	DirectX::XMVECTOR newScale = DirectX::XMVectorMultiply(currentScale, DirectX::XMVectorSet(ScaleX, ScaleY, ScaleZ, 1.0f));
+
+	// Recompose the matrix with the new scale
+	DirectX::XMMATRIX Result = DirectX::XMMatrixScalingFromVector(newScale) *
+		DirectX::XMMatrixRotationQuaternion(currentRotation) *
+		DirectX::XMMatrixTranslationFromVector(currentTranslation);
 
 	DirectX::XMStoreFloat4x4(&PickedRenderItem->World, Result);
 }
@@ -472,7 +516,7 @@ void ShapesApp::BuildDescriptors()
 }
 
 
-Material* ShapesApp::BuildMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
+Material* ShapesApp::BuildOrGetMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
 	float aDiffuseAlbedo, float aFresnalRO, float aShininess, float aUvTileValue)
 {
 	auto MaterialName = "Mat_" + aMatName;
@@ -480,8 +524,8 @@ Material* ShapesApp::BuildMaterial(std::string aMatName, std::string aDiffuseTex
 	{
 		std::string ErrorMsg = "[Error] Material already Exists: " + MaterialName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Building an existing material with same name.");
-		return nullptr;
+		//assert(false && "Building an existing material with same name.");
+		return GetMaterial(aMatName);
 	}
 	auto DiffTexture = GetTexture(aDiffuseTexName);
 	if (!DiffTexture)
@@ -519,7 +563,11 @@ Material* ShapesApp::BuildMaterial(std::string aMatName, std::string aDiffuseTex
 
 Material* ShapesApp::GetMaterial(std::string aMaterialName)
 {
-	auto MaterialName = "Mat_" + aMaterialName;
+	std::string MaterialName = aMaterialName;
+	if (aMaterialName.find("Mat_") != 0)
+	{
+		MaterialName = "Mat_" + aMaterialName;
+	}
 	if (Materials.find(MaterialName) == Materials.end())
 	{
 		std::string ErrorMsg = "[Error] Material ain't Exists: " + MaterialName + "\n";
@@ -944,22 +992,36 @@ void ShapesApp::BuildShadersAndInputLayout()
 	Shaders["ShadowDebugPS"] = d3dUtil::CompileShader(L"src\\Shaders\\ShadowMapDebug.hlsl", nullptr, "PS", "ps_5_1");
 }
 
-void ShapesApp::BuildGeometryResource()
+void ShapesApp::CreateModelGeometry(std::string Path, std::string GeomertryName)
 {
-	ModelImporter::ModelData smgModelData;
-	bool smgLoaded = ModelImporter::LoadModel(
-		"Assets\\Models\\SMG\\M24_R_Low_Poly_Version_fbx.fbx",
-		smgModelData, true, false, false);
-
-	if (smgLoaded)
+	ModelImporter::ModelData ModelData;
+	bool ModelLoaded = ModelImporter::LoadModel(
+		Path,
+		ModelData, true, false, false);
+	if (ModelLoaded)
 	{
-		auto smgMeshGeo = ModelImporter::CreateMeshGeometry(smgModelData, DxDevice3D.Get(), CommandList.Get(), "SMG");
-		MeshGeometries[smgMeshGeo->Name] = std::move(smgMeshGeo);
+		std::string DebugMsg = GeomertryName + " model loaded successfully:\n";
+		DebugMsg += "  Vertices: " + std::to_string(ModelData.Vertices.size()) + "\n";
+		DebugMsg += "  Indices: " + std::to_string(ModelData.Use32BitIndices ? ModelData.Indices32.size() : ModelData.Indices16.size()) + "\n";
+		DebugMsg += "  Submeshes: " + std::to_string(ModelData.Submeshes.size()) + "\n";
+		::OutputDebugStringA(DebugMsg.c_str());
+
+		auto Geomertry = ModelImporter::CreateMeshGeometry(ModelData, DxDevice3D.Get(), CommandList.Get(),GeomertryName);
+		MeshGeometries[Geomertry->Name] = std::move(Geomertry);
 	}
 	else
 	{
-		std::cerr << "Failed to load SMG model!" << std::endl;
+		std::string Error = GeomertryName + " Failed to load model!\n";
+		::OutputDebugStringA(Error.c_str());
 	}
+}
+
+void ShapesApp::BuildGeometryResource()
+{
+	CreateModelGeometry("Assets\\Models\\SMG\\M24_R_Low_Poly_Version_fbx.fbx", "SMG");
+	CreateModelGeometry("Assets\\Models\\Body.fbx", "Body");
+	CreateModelGeometry("Assets\\Models\\Skull\\skull_low.fbx", "Skull");
+	CreateModelGeometry("Assets\\Models\\Cross\\cross_low.fbx", "Cross");
 
 	GeometryGenerator GeoGen;
 	//SkyBox
@@ -1090,63 +1152,81 @@ void ShapesApp::BuildGeometryResource()
 	MeshGeometries[DebugQuad->Name] = move(DebugQuad);
 }
 
+void ShapesApp::ModelToRenderItem(const std::string& meshKey, UINT& objIndex, Material* material,
+	const DirectX::XMMATRIX& worldTransform, RenderLayer layer)
+{
+	if (MeshGeometries.find(meshKey) != MeshGeometries.end())
+	{
+		auto MeshGeo = MeshGeometries[meshKey].get();
+		for (const auto& [submeshName, submesh] : MeshGeo->DrawArgs)
+		{
+			std::unique_ptr<RenderItem> NewRenderItem = std::make_unique<RenderItem>();
+			NewRenderItem->Name = meshKey + "_" + std::to_string(objIndex) + "_" + submeshName;
+			DirectX::XMStoreFloat4x4(&NewRenderItem->World, worldTransform);
+			NewRenderItem->ObjConstBufferIndex = objIndex++;
+			NewRenderItem->MeshGeometryRef = MeshGeo;
+			NewRenderItem->MaterialRef = material;
+			NewRenderItem->IndexCount = submesh.IndexCount;
+			NewRenderItem->IndexStartLocation = submesh.StartIndexLocation;
+			NewRenderItem->VertexStartLocation = submesh.BaseVertexLocation;
+			NewRenderItem->Bounds = submesh.Bounds;
+			AddRenderItem(std::move(NewRenderItem), layer);
+		}
+	}
+}
+
 void ShapesApp::BuildRenderItems()
 {
 	UINT objIndex = 0;
 
-	if (MeshGeometries.find("SMG") != MeshGeometries.end())
-	{
-		auto smgMeshGeo = MeshGeometries["SMG"].get();
-		for (const auto& [submeshName, submesh] : smgMeshGeo->DrawArgs)
-		{
-			std::unique_ptr<RenderItem> smgRenderItem = std::make_unique<RenderItem>();
-			smgRenderItem->Name = std::string("SMG_") + submeshName;
-			DirectX::XMStoreFloat4x4(&smgRenderItem->World,
-				DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *
-				DirectX::XMMatrixRotationY(DirectX::XM_PI / 2) *
-				DirectX::XMMatrixRotationZ(DirectX::XM_PI / 2) *
-				DirectX::XMMatrixTranslation(0.0f, -1.5f, 0.0f)
-			);
-			smgRenderItem->ObjConstBufferIndex = objIndex++;
-			smgRenderItem->MeshGeometryRef = smgMeshGeo;
-			smgRenderItem->MaterialRef = BuildMaterial("SMG", "M24R_C", "M24R_N",
-				1, .7f, .7f, 1);
-			smgRenderItem->IndexCount = submesh.IndexCount;
-			smgRenderItem->IndexStartLocation = submesh.StartIndexLocation;
-			smgRenderItem->VertexStartLocation = submesh.BaseVertexLocation;
-			smgRenderItem->Bounds = submesh.Bounds;
-			AddRenderItem(std::move(smgRenderItem), RenderLayer::Opaque);
-		}
-	}
+	// SMG Model
+	ModelToRenderItem("SMG", objIndex,
+		BuildOrGetMaterial("SMG", "M24R_C", "M24R_N", 1.0f, .2f, .1f, 1),
+		DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *
+		DirectX::XMMatrixRotationY(DirectX::XM_PI / 2) *
+		DirectX::XMMatrixRotationZ(DirectX::XM_PI / 2) *
+		DirectX::XMMatrixTranslation(0.0f, -1.5f, 0.0f),
+		RenderLayer::Opaque);
 
-	if (MeshGeometries.find("DebugQuad") != MeshGeometries.end())
-	{
-		auto DebugQuadMeshGeo = MeshGeometries["DebugQuad"].get();
-		for (const auto& [submeshName, submesh] : DebugQuadMeshGeo->DrawArgs)
-		{
-			std::unique_ptr<RenderItem> DebugQuadRI = std::make_unique<RenderItem>();
-			DebugQuadRI->Name = std::string("DebugQuad_") + submeshName;
+	// Body Model
+	ModelToRenderItem("Body", objIndex,
+		BuildOrGetMaterial("Gold", "Poliigon_MetalGoldPaint_7253_BaseColor", "Poliigon_MetalGoldPaint_7253_Normal"
+			, .7f, .95f, .95f, 1),
+		DirectX::XMMatrixScaling(0.1f, 0.1f, 0.1f) *
+		DirectX::XMMatrixRotationY(DirectX::XM_PI / 2) *
+		DirectX::XMMatrixRotationZ(DirectX::XM_PI / 2) *
+		DirectX::XMMatrixTranslation(0.0f, -1.5f, 0.0f),
+		RenderLayer::Opaque);
 
-			DebugQuadRI->World = MathHelper::Identity4x4();
-			DebugQuadRI->ObjConstBufferIndex = objIndex++;
-			DebugQuadRI->MeshGeometryRef = DebugQuadMeshGeo;
-			DebugQuadRI->MaterialRef = BuildMaterial("DepthDebugQuad", "tile", "tile_nmap",
-				1, .1f, .1f, 1);
-			DebugQuadRI->IndexCount = submesh.IndexCount;
-			DebugQuadRI->IndexStartLocation = submesh.StartIndexLocation;
-			DebugQuadRI->VertexStartLocation = submesh.BaseVertexLocation;
-			DebugQuadRI->Bounds = submesh.Bounds;
-			AddRenderItem(std::move(DebugQuadRI), RenderLayer::ShadowDebug);
-		}
-	}
+	// Skull Model
+	ModelToRenderItem("Skull", objIndex,
+		BuildOrGetMaterial("Reflection2", "Poliigon_MetalGoldPaint_7253_BaseColor", "Poliigon_MetalGoldPaint_7253_Normal",
+			.5f, .95f, .95f, 1),
+		DirectX::XMMatrixScaling(0.5f, 0.5f, 0.5f) *
+		DirectX::XMMatrixTranslation(0.0f, 0, 0.0f),
+		RenderLayer::Reflection);
+	
+	// Cross Model
+	ModelToRenderItem("Cross", objIndex,
+		BuildOrGetMaterial("Gold2", "Poliigon_MetalGoldPaint_7253_BaseColor", "Poliigon_MetalGoldPaint_7253_Normal",
+			1.0f, .3f, .95f, 1),
+		DirectX::XMMatrixScaling(0.01f, 0.01f, 0.01f) *
+		DirectX::XMMatrixTranslation(0.0f, 0, 0.0f),
+		RenderLayer::Opaque);
+
+	// Debug Shadow Map Quad
+	ModelToRenderItem("DebugQuad", objIndex,
+		BuildOrGetMaterial("DepthDebugQuad", "tile", "tile_nmap", 1, .1f, .1f, 1),
+		DirectX::XMMatrixIdentity(),
+		RenderLayer::ShadowDebug);
 
 	std::unique_ptr<RenderItem> CubeMesh = std::make_unique<RenderItem>();
 	CubeMesh->Name = std::string("CubeMesh_") + "Base";
 	DirectX::XMStoreFloat4x4(&CubeMesh->World, DirectX::XMMatrixTranslation(3.0f, -1.5f, 2.0f));  // Move cube away from z=0
 	CubeMesh->ObjConstBufferIndex = objIndex++;
 	CubeMesh->MeshGeometryRef = MeshGeometries["Cube"].get();
-	CubeMesh->MaterialRef = BuildMaterial("CubeMesh", "bricks2", "bricks2_nmap",
-		.5f, .2f, .2f, 1);
+	CubeMesh->MaterialRef = BuildOrGetMaterial("CubeMesh", "ice", "default_nmap",
+		1.0f, .5f, .5f, 1);
 	CubeMesh->IndexCount = CubeMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	CubeMesh->IndexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	CubeMesh->VertexStartLocation = CubeMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
@@ -1159,8 +1239,8 @@ void ShapesApp::BuildRenderItems()
 		* DirectX::XMMatrixRotationX(DirectX::XM_PIDIV2) * DirectX::XMMatrixTranslation(0.0f, -2.0f, 0.0f));
 	SurfaceMesh->ObjConstBufferIndex = objIndex++;
 	SurfaceMesh->MeshGeometryRef = MeshGeometries["Surface"].get();
-	SurfaceMesh->MaterialRef = BuildMaterial("SurfaceMesh", "tile", "tile_nmap",
-		1.0f, .6f, .5f, 10);
+	SurfaceMesh->MaterialRef = BuildOrGetMaterial("SurfaceMesh", "ice", "default_nmap",
+		1.0f, .2f, .9f, 1);
 	SurfaceMesh->IndexCount = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	SurfaceMesh->IndexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
 	SurfaceMesh->VertexStartLocation = SurfaceMesh->MeshGeometryRef->DrawArgs["Base"].BaseVertexLocation;
@@ -1172,7 +1252,7 @@ void ShapesApp::BuildRenderItems()
 	DirectX::XMStoreFloat4x4(&SkyBoxMesh->World, DirectX::XMMatrixScaling(500, 500, 500));
 	SkyBoxMesh->ObjConstBufferIndex = objIndex++;
 	SkyBoxMesh->MeshGeometryRef = MeshGeometries["Skybox"].get();
-	SkyBoxMesh->MaterialRef = BuildMaterial("Reflection", "white1x1", "default_nmap",
+	SkyBoxMesh->MaterialRef = BuildOrGetMaterial("Reflection", "white1x1", "default_nmap",
 		.05f, .95f, .95f, 1);
 	SkyBoxMesh->IndexCount = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].IndexCount;
 	SkyBoxMesh->IndexStartLocation = SkyBoxMesh->MeshGeometryRef->DrawArgs["Base"].StartIndexLocation;
@@ -1300,14 +1380,19 @@ void ShapesApp::BuildPSO()
 	ThrowIfFailed(DxDevice3D->CreateGraphicsPipelineState(&SkyPsoDesc, IID_PPV_ARGS(&PSO["Sky"])));
 }
 
-
 void ShapesApp::SaveRenderItemsData()
 {
 	std::ofstream OfileStream("RenderItems_metadata.txt");
 	if (!OfileStream.is_open())
 		return;
-	auto OpaqRenderItems = RenderLayerItems[(int)RenderLayer::Opaque];
-	for (auto RenderItem : OpaqRenderItems)
+	auto& OpaqRItems = RenderLayerItems[(int)RenderLayer::Opaque];
+	auto& RefRItems = RenderLayerItems[(int)RenderLayer::Reflection];
+	std::vector<RenderItem*> AllowedRenderItems;
+	AllowedRenderItems.reserve(OpaqRItems.size() + RefRItems.size());
+	AllowedRenderItems.insert(AllowedRenderItems.begin(), OpaqRItems.begin(), OpaqRItems.end());
+	AllowedRenderItems.insert(AllowedRenderItems.begin(), RefRItems.begin(), RefRItems.end());
+
+	for (auto RenderItem : AllowedRenderItems)
 	{
 		auto world = RenderItem->World;
 		OfileStream << RenderItem->Name << " "
@@ -1325,7 +1410,13 @@ void ShapesApp::LoadRenderItemsData()
 	std::ifstream IfileStream("RenderItems_metadata.txt");
 	if (!IfileStream.is_open())
 		return;
-	auto OpaqRenderItems = RenderLayerItems[(int)RenderLayer::Opaque];
+
+	auto& OpaqRItems = RenderLayerItems[(int)RenderLayer::Opaque];
+	auto& RefRItems = RenderLayerItems[(int)RenderLayer::Reflection];
+	std::vector<RenderItem*> AllowedRenderItems;
+	AllowedRenderItems.reserve(OpaqRItems.size() + RefRItems.size());
+	AllowedRenderItems.insert(AllowedRenderItems.begin(), OpaqRItems.begin(), OpaqRItems.end());
+	AllowedRenderItems.insert(AllowedRenderItems.begin(), RefRItems.begin(), RefRItems.end());
 
 	std::string StringLine;
 	while (std::getline(IfileStream, StringLine))
@@ -1340,7 +1431,7 @@ void ShapesApp::LoadRenderItemsData()
 			>> RiWorld._31 >> RiWorld._32 >> RiWorld._33 >> RiWorld._34
 			>> RiWorld._41 >> RiWorld._42 >> RiWorld._43 >> RiWorld._44)
 		{
-			for (auto& RenderItem : OpaqRenderItems)
+			for (auto& RenderItem : AllowedRenderItems)
 			{
 				if (RenderItem->Name == RiName)
 				{

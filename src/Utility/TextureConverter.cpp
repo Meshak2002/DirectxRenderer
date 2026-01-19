@@ -428,6 +428,7 @@ namespace TextureConverter
 
         if (lower.find("normal") != std::string::npos ||
             lower.find("_n") != std::string::npos ||
+            lower.find("_nor") != std::string::npos ||
             lower.find("_nrm") != std::string::npos)
         {
             return true;

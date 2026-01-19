@@ -136,5 +136,7 @@
     <Image Include="Assets\DDS\white1x1.dds" />
     <Image Include="Assets\DDS\WoodCrate01.dds" />
     <Image Include="Assets\DDS\WoodCrate02.dds" />
+    <Image Include="Assets\Textures\SandTerrarin\sandy_gravel_02_diff_1k.jpg" />
+    <Image Include="Assets\Textures\SandTerrarin\sandy_gravel_02_nor_dx_1k.jpg" />
   </ItemGroup>
 </Project>

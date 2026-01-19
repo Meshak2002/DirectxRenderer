@@ -49,6 +49,7 @@ private:
 
 	void BuildRootSignature();
 	void BuildShadersAndInputLayout();
+	void CreateModelGeometry(std::string Path, std::string GeomertryName);
 	void BuildGeometryResource();
 	void BuildRenderItems();
 	void BuildFrameResources();
@@ -63,11 +64,12 @@ private:
 	void Pick(int X, int Y);
 	void MovePickedObj(float X, float Y, float Z , bool bInLocalSpace=true);
 	void RotatePickedObj(float Pitch, float Yaw, float Roll);
+	void ScalePickedObj(float ScaleX, float ScaleY, float ScaleZ);
 	void InitCamera();
 	void InitCubeMapCameras(float CenterX , float CenterY, float CenterZ);
 	void BuildTextures();
 	void BuildDescriptors();
-	Material* BuildMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
+	Material* BuildOrGetMaterial(std::string aMatName, std::string aDiffuseTexName, std::string aNormalTexName,
 		float aDiffuseAlbedo = 1, float aFresnalRO = .5f, float aShininess = .5f, float aUvTileValue = 1.0f);
 	Material* GetMaterial(std::string aMaterialName);
 	Texture* GetTexture(std::string aTextureName);
@@ -75,6 +77,8 @@ private:
 	void SaveRenderItemsData();
 	void LoadRenderItemsData();
 	RenderItem* AddRenderItem(std::unique_ptr<RenderItem> aRenderItem, RenderLayer aLayer);
+	void ModelToRenderItem(const std::string& meshKey, UINT& objIndex, Material* material,
+		const DirectX::XMMATRIX& worldTransform, RenderLayer layer = RenderLayer::Opaque);
 
 
 	Microsoft::WRL::ComPtr<ID3D12RootSignature> RootSignature;

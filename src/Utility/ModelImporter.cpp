@@ -126,7 +126,7 @@ namespace ModelImporter
 
             // Store submesh info
             ModelData::Submesh submesh;
-            submesh.Name = mesh->mName.C_Str();
+            submesh.Name = mesh->mName.C_Str() + std::string("_") + std::to_string(submeshes.size());
             submesh.BaseVertexLocation = baseVertex;
             submesh.StartIndexLocation = startIndex;
             submesh.IndexCount = indexCount;
