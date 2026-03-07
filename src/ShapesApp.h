@@ -104,7 +104,8 @@ private:
 	UINT ShadowCubeMapHeapIndex;
 	UINT SrvCubeMapHeapIndex;
 
-	UINT CurrentFrameResourceIndex{UINT_MAX};
+	// Initialize to last frame index so first increment wraps to 0
+	UINT CurrentFrameResourceIndex = 2;  // TotalFrameResources - 1
 	POINT MouseLastPos;
 	bool bDebugShadowMap=false;
 	bool bLeftMouseDown=false;

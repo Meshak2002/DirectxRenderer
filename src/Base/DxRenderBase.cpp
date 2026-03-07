@@ -5,14 +5,20 @@
 DxRenderBase::DxRenderBase(HINSTANCE Instance)
 : WindowInstance(Instance)
 {
-	assert(DxInstance == nullptr);
+	if (DxInstance != nullptr)
+	{
+		throw std::runtime_error("DxRenderBase instance already exists. Only one instance allowed.");
+	}
 	DxInstance = this;
 }
 
 LRESULT CALLBACK
 MainWndProc(HWND Hwnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
-	return DxRenderBase::Get()->MsgProc(Hwnd, Msg, wParam, lParam);
+	auto Instance = DxRenderBase::Get();
+	if (!Instance)
+		return DefWindowProc(Hwnd, Msg, wParam, lParam);
+	return Instance->MsgProc(Hwnd, Msg, wParam, lParam);
 }
 
 DxRenderBase* DxRenderBase::DxInstance = nullptr;
@@ -26,6 +32,19 @@ DxRenderBase::~DxRenderBase()
 {
 	if (DxDevice3D)
 		FlushCommandQueue();
+
+	// Clean up fence event handle
+	if (FenceEventHandle)
+	{
+		CloseHandle(FenceEventHandle);
+		FenceEventHandle = nullptr;
+	}
+
+	// Unregister window class
+	if (WindowInstance)
+	{
+		UnregisterClass(L"DxRenderBaseWindowClass", WindowInstance);
+	}
 }
 
 int DxRenderBase::Run()
@@ -73,9 +92,12 @@ bool DxRenderBase::Initialize()
 
 void DxRenderBase::OnResize()
 {
-	assert(DxDevice3D);
-	assert(SwapChain);
-	assert(CommandAlloc);
+	if (!DxDevice3D)
+		throw std::runtime_error("DxDevice3D is null in OnResize");
+	if (!SwapChain)
+		throw std::runtime_error("SwapChain is null in OnResize");
+	if (!CommandAlloc)
+		throw std::runtime_error("CommandAlloc is null in OnResize");
 
 	if (ScreenWidth == 0 || ScreenHeight == 0)
 		return;
@@ -303,6 +325,14 @@ bool DxRenderBase::InitDirect3D()
 	}
 
 	ThrowIfFailed(DxDevice3D->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&Fence)));
+
+	// Create reusable fence event for CPU-GPU synchronization
+	FenceEventHandle = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+	if (!FenceEventHandle)
+	{
+		throw DxException(HRESULT_FROM_WIN32(GetLastError()), L"CreateEventEx", AnsiToWString(__FILE__), __LINE__);
+	}
+
 	CbvSrvUavDescriptorSize = DxDevice3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	RtvDescriptorSize = DxDevice3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	DsvDescriptorSize = DxDevice3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
@@ -314,7 +344,10 @@ bool DxRenderBase::InitDirect3D()
 	MultisampleQualityLevels.NumQualityLevels = 0;
 	ThrowIfFailed(DxDevice3D->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS, &MultisampleQualityLevels, sizeof(MultisampleQualityLevels)));
 	MsaaQuality = MultisampleQualityLevels.NumQualityLevels;
-	assert(MsaaQuality > 0 && "Improper Msaa quality");
+	if (MsaaQuality == 0)
+	{
+		throw std::runtime_error("Improper MSAA quality: Device does not support 4X MSAA");
+	}
 
 	CreateCommandObjects();
 	CreateSwapChain();
@@ -377,11 +410,9 @@ void DxRenderBase::FlushCommandQueue()
 	ThrowIfFailed( CommandQueue->Signal(Fence.Get(), CurrentFenceValue) );
 	if (Fence->GetCompletedValue() < CurrentFenceValue)
 	{
-		HANDLE EventHandle = CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
-
-		ThrowIfFailed(Fence->SetEventOnCompletion(CurrentFenceValue, EventHandle));
-		WaitForSingleObject(EventHandle, INFINITE);
-		CloseHandle(EventHandle);
+		// Use reusable fence event handle instead of creating/destroying each time
+		ThrowIfFailed(Fence->SetEventOnCompletion(CurrentFenceValue, FenceEventHandle));
+		WaitForSingleObject(FenceEventHandle, INFINITE);
 	}
 }
 

@@ -38,8 +38,9 @@ protected:
 	Microsoft::WRL::ComPtr<ID3D12Fence> Fence;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> RtvHeap;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> DsvHeap;
-	
+
 	UINT64 CurrentFenceValue = 0;
+	HANDLE FenceEventHandle = nullptr;
 	RECT ScissorRect;
 	D3D12_VIEWPORT Viewport;
 	HINSTANCE WindowInstance;

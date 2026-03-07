@@ -352,6 +352,19 @@ bool ShapesApp::Initialize()
 	CommandQueue->ExecuteCommandLists(_countof(Commands), Commands);
 
 	FlushCommandQueue();
+
+	// GPU upload complete - dispose of upload buffers to free GPU memory
+	for (auto& Geometry : MeshGeometries)
+	{
+		Geometry.second->DisposeUploaders();
+	}
+
+	// Dispose of texture upload heaps
+	for (auto& Texture : Textures)
+	{
+		Texture.second->UploadHeap = nullptr;
+	}
+
 	return true;
 }
 
@@ -405,7 +418,10 @@ void ShapesApp::InitCubeMapCameras(float CenterX, float CenterY, float CenterZ)
 void ShapesApp::BuildTextures()
 {
 	std::string TextureDirectory = "Assets\\DDS";
-	assert(std::filesystem::exists(TextureDirectory));
+	if (!std::filesystem::exists(TextureDirectory))
+	{
+		throw std::runtime_error("Texture directory does not exist: " + TextureDirectory);
+	}
 
 	//Create Diffuse Textures
 	for (auto Entry : std::filesystem::recursive_directory_iterator(TextureDirectory))
@@ -535,8 +551,7 @@ Material* ShapesApp::BuildOrGetMaterial(std::string aMatName, std::string aDiffu
 	{
 		std::string ErrorMsg = "[Error] Given texture is not a Diffuse texture: Tex_" + aDiffuseTexName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Given texture is not a Diffuse texture");
-		return nullptr;
+		throw std::runtime_error("Given texture is not a Diffuse texture: Tex_" + aDiffuseTexName);
 	}
 
 	auto NormTexture = GetTexture(aNormalTexName);
@@ -547,8 +562,7 @@ Material* ShapesApp::BuildOrGetMaterial(std::string aMatName, std::string aDiffu
 	{
 		std::string ErrorMsg = "[Error] Given texture is not a Normal texture: Tex_" + aNormalTexName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Given texture is not a Normal texture");
-		return nullptr;
+		throw std::runtime_error("Given texture is not a Normal texture: Tex_" + aNormalTexName);
 	}
 	auto NewMaterial = std::make_unique<Material>();
 	NewMaterial->DiffuseSrvHeapIndex = DiffTexture->DescriptorHeapIndex;
@@ -570,10 +584,9 @@ Material* ShapesApp::GetMaterial(std::string aMaterialName)
 	}
 	if (Materials.find(MaterialName) == Materials.end())
 	{
-		std::string ErrorMsg = "[Error] Material ain't Exists: " + MaterialName + "\n";
+		std::string ErrorMsg = "[Error] Material does not exist: " + MaterialName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Material ain't Exists");
-		return nullptr;
+		throw std::runtime_error("Material does not exist: " + MaterialName);
 	}
 	return Materials[MaterialName].get();
 }
@@ -591,8 +604,7 @@ Texture* ShapesApp::GetTexture(std::string aTextureName)
 	{
 		std::string ErrorMsg = "[Error] Texture doesn't exist: " + TextureName + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Texture doesn't exist");
-		return nullptr;
+		throw std::runtime_error("Texture doesn't exist: " + TextureName);
 	}
 	return Textures[TextureName].get();
 }
@@ -603,8 +615,7 @@ bool ShapesApp::AddTexture(std::unique_ptr<Texture> aTexture)
 	{
 		std::string ErrorMsg = "[Error] Attempted to add null Texture\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Attempted to add null Texture");
-		return false;
+		throw std::invalid_argument("Attempted to add null Texture");
 	}
 
 	// Check for duplicate texture name
@@ -613,8 +624,7 @@ bool ShapesApp::AddTexture(std::unique_ptr<Texture> aTexture)
 		std::string ErrorMsg = "[Error] Texture with name '" + aTexture->Name + "' already exists. ";
 		ErrorMsg += "Possible duplicate file: " + std::string(aTexture->Filename.begin(), aTexture->Filename.end()) + "\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Texture with duplicate name already exists");
-		return false;
+		throw std::runtime_error("Texture with duplicate name already exists: " + aTexture->Name);
 	}
 
 	Textures[aTexture->Name] = std::move(aTexture);
@@ -730,7 +740,10 @@ void ShapesApp::UpdateConstBuffers()
 		DirectX::XMStoreFloat4x4(&ObjConstBufferData.World, DirectX::XMMatrixTranspose(XWorld));
 		ObjConstBufferRes->CopyData(ObjConstBufferIndex, ObjConstBufferData);
 
-		assert(RenderItem->MaterialRef->DiffuseSrvHeapIndex >= 0 && RenderItem->MaterialRef->NormalSrvHeapIndex >= 0);
+		if (RenderItem->MaterialRef->DiffuseSrvHeapIndex < 0 || RenderItem->MaterialRef->NormalSrvHeapIndex < 0)
+		{
+			throw std::runtime_error("Invalid SRV heap index for material in RenderItem: " + RenderItem->Name);
+		}
 		MaterialConstBuffer MatConstBufferData
 		{
 			RenderItem->MaterialRef->DiffuseAlbedo,
@@ -924,7 +937,10 @@ void ShapesApp::DrawRenderItems(ID3D12GraphicsCommandList* CommandList, std::vec
 
 FrameResource<ShapesApp::PassConstBuffer, ShapesApp::ObjConstBuffer, ShapesApp::MaterialConstBuffer>* ShapesApp::GetCurrentFrameResource() const
 {
-	assert((CurrentFrameResourceIndex >= 0 && CurrentFrameResourceIndex < FrameResources.size()) && "Trying to get FrameRes REF with an invalid Index");
+	if (CurrentFrameResourceIndex >= FrameResources.size())
+	{
+		throw std::out_of_range("Trying to get FrameResource with an invalid Index: " + std::to_string(CurrentFrameResourceIndex));
+	}
 	return FrameResources[CurrentFrameResourceIndex].get();
 }
 
@@ -1451,8 +1467,7 @@ ShapesApp::RenderItem* ShapesApp::AddRenderItem(std::unique_ptr<RenderItem> aRen
 	{
 		std::string ErrorMsg = "[Error] Attempted to add null RenderItem\n";
 		::OutputDebugStringA(ErrorMsg.c_str());
-		assert(false && "Attempted to add null RenderItem");
-		return nullptr;
+		throw std::invalid_argument("Attempted to add null RenderItem");
 	}
 
 	// Check for duplicate name
@@ -1462,8 +1477,7 @@ ShapesApp::RenderItem* ShapesApp::AddRenderItem(std::unique_ptr<RenderItem> aRen
 		{
 			std::string ErrorMsg = "[Error] RenderItem with name '" + aRenderItem->Name + "' already exists\n";
 			::OutputDebugStringA(ErrorMsg.c_str());
-			assert(false && "RenderItem with duplicate name already exists");
-			return nullptr;
+			throw std::runtime_error("RenderItem with duplicate name already exists: " + aRenderItem->Name);
 		}
 	}
 

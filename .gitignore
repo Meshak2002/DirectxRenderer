@@ -131,7 +131,6 @@ vcpkg_installed/
 *.nupkg
 
 # Output directories
-OutputPics/
 Outputs/
 
 CLAUDE.md

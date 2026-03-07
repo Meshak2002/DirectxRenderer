@@ -72,7 +72,7 @@ void ShadowMap::BuildResource()
 	DsvClearVal.DepthStencil = {1 , 0};
 
 	auto HeapProperty = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-	Device->CreateCommittedResource(&HeapProperty, D3D12_HEAP_FLAG_NONE, &DsvResDesc,
-		D3D12_RESOURCE_STATE_GENERIC_READ, &DsvClearVal, IID_PPV_ARGS(&DepthBufferResource));
+	ThrowIfFailed(Device->CreateCommittedResource(&HeapProperty, D3D12_HEAP_FLAG_NONE, &DsvResDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, &DsvClearVal, IID_PPV_ARGS(&DepthBufferResource)));
 }
 

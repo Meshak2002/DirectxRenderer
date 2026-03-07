@@ -156,7 +156,10 @@ void Camera::LookAt(const XMFLOAT3& pos, const XMFLOAT3& target, const XMFLOAT3&
 
 XMMATRIX Camera::GetView()const
 {
-	assert(!mViewDirty);
+	if (mViewDirty)
+	{
+		throw std::runtime_error("Camera view matrix is dirty. Call UpdateViewMatrix() before GetView().");
+	}
 	return XMLoadFloat4x4(&mView);
 }
 
@@ -168,7 +171,10 @@ XMMATRIX Camera::GetProj()const
 
 XMFLOAT4X4 Camera::GetView4x4f()const
 {
-	assert(!mViewDirty);
+	if (mViewDirty)
+	{
+		throw std::runtime_error("Camera view matrix is dirty. Call UpdateViewMatrix() before GetView4x4f().");
+	}
 	return mView;
 }
 
