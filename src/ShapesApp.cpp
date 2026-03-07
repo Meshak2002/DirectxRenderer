@@ -1382,7 +1382,7 @@ void ShapesApp::BuildPSO()
 
 void ShapesApp::SaveRenderItemsData()
 {
-	std::ofstream OfileStream("RenderItems_metadata.txt");
+	std::ofstream OfileStream("Assets/RenderItems_metadata.txt");
 	if (!OfileStream.is_open())
 		return;
 	auto& OpaqRItems = RenderLayerItems[(int)RenderLayer::Opaque];
@@ -1407,7 +1407,7 @@ void ShapesApp::SaveRenderItemsData()
 
 void ShapesApp::LoadRenderItemsData()
 {
-	std::ifstream IfileStream("RenderItems_metadata.txt");
+	std::ifstream IfileStream("Assets/RenderItems_metadata.txt");
 	if (!IfileStream.is_open())
 		return;
 

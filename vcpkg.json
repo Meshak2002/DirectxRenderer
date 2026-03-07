@@ -3,6 +3,10 @@
   "name": "directxrenderer",
   "version": "1.0.0",
   "dependencies": [
-    "assimp"
+    "assimp",
+    {
+      "name": "directxtex",
+      "features": ["dx12"]
+    }
   ]
 }
